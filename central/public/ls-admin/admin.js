@@ -7,7 +7,8 @@ const state = {
     transactionsPage: 1,
     adminUsersPage: 1,
     pageSize: 50,
-    me: null
+    me: null,
+    license: null
 };
 
 const $ = id => document.getElementById(id);
@@ -21,6 +22,7 @@ const api = async (url, options = {}) => {
     if (!response.ok) {
         const error = new Error(data.error || `HTTP_${response.status}`);
         error.status = response.status;
+        error.data = data;
         throw error;
     }
     return data;
@@ -116,6 +118,7 @@ async function checkSession() {
     try {
         const data = await api("/api/v1/admin/me");
         state.me = data.user;
+        state.license = data.license || null;
         showApp();
     } catch (_) {
         showLogin();
@@ -144,6 +147,7 @@ $("loginForm").addEventListener("submit", async event => {
             body: JSON.stringify({ username: $("loginUsername").value.trim(), password: $("loginPassword").value })
         });
         state.me = data.user;
+        state.license = data.license || null;
         $("loginPassword").value = "";
         showApp();
     } catch (error) {
@@ -198,6 +202,18 @@ $("menuBtn").addEventListener("click", () => $("sidebar").classList.toggle("open
 function handleError(error) {
     console.error(error);
     if (error.status === 401) return showLogin();
+
+    if (error.status === 402) {
+        const licenseData = error.data?.license || null;
+        if (licenseData) {
+            state.license = licenseData;
+        }
+        toast("Trial license expired. Open Devices & Maintenance → License Details to activate this Raspberry Pi.");
+        if (isAdministrator()) {
+            navigate("devices");
+        }
+        return;
+    }
 
     if (error.status === 403) {
         toast("Administrator access required.");
@@ -459,6 +475,198 @@ function bindNfcCaptureButton() {
     });
 }
 
+
+/* =========================================================
+   DEVICE LICENSE DETAILS
+========================================================= */
+
+function licenseFeatureRow(label, enabled) {
+    return `
+        <div class="license-feature">
+            <span>${escapeHtml(label)}</span>
+            <strong class="${enabled ? "feature-ok" : "feature-blocked"}">
+                ${enabled ? "ENABLED" : "DISABLED"}
+            </strong>
+        </div>`;
+}
+
+function licenseCommandText(command) {
+    if (!command) return "No pending license command.";
+
+    const status = String(command.status || "-").toUpperCase();
+    const action = String(command.command || "-").toUpperCase();
+
+    if (["PENDING", "PROCESSING"].includes(status)) {
+        return `${action} ${status} · created ${formatDate(command.created_at)} · expires ${formatDate(command.expires_at)}`;
+    }
+
+    if (status === "FAILED") {
+        return `${action} FAILED · ${command.error_text || "Unknown error"}`;
+    }
+
+    if (status === "SUCCESS") {
+        return `${action} SUCCESS · ${formatDate(command.completed_at)}`;
+    }
+
+    return `${action} ${status}`;
+}
+
+function deviceLicenseDetailsHtml(payload) {
+    const device = payload.device || {};
+    const status = payload.license || {};
+    const command = payload.command || null;
+    const lifetime = String(status.plan || "").toLowerCase() === "lifetime";
+    const expired = String(status.status || "").toUpperCase() === "TRIAL_EXPIRED";
+    const local = Boolean(device.is_local_central);
+
+    return `
+        <div class="full-row device-license-heading">
+            <div>
+                <span class="muted">DEVICE LICENSE</span>
+                <h3>${escapeHtml(device.name || device.device_id || "Device")}</h3>
+                <p>${escapeHtml(device.device_id || "-")} · ${escapeHtml(device.location || "No location")}</p>
+            </div>
+            ${badge(lifetime ? "LIFETIME" : (expired ? "TRIAL_EXPIRED" : "TRIAL"))}
+        </div>
+
+        <div class="full-row license-grid embedded-license-grid">
+            <div class="panel license-main-card">
+                <div class="license-plan-row">
+                    <div>
+                        <span class="muted">CURRENT PLAN</span>
+                        <h3>${lifetime ? "Lifetime" : "Trial"}</h3>
+                    </div>
+                    ${badge(status.status || (lifetime ? "LIFETIME" : "TRIAL"))}
+                </div>
+
+                <div class="license-meta-grid">
+                    <div><span>Product</span><strong>${escapeHtml(status.product_slug || "ls-inventory-hmilab")}</strong></div>
+                    <div><span>Hostname</span><strong>${escapeHtml(status.hostname || "-")}</strong></div>
+                    <div class="full"><span>Fingerprint</span><code>${escapeHtml(status.fingerprint || "Waiting for device heartbeat")}</code></div>
+                    <div><span>License Key</span><strong>${escapeHtml(status.license_key_masked || "Not configured")}</strong></div>
+                    <div><span>Last Verified</span><strong>${formatDate(status.last_verified_at)}</strong></div>
+                    ${lifetime ? "" : `
+                        <div><span>Trial Started</span><strong>${formatDate(status.trial_started_at)}</strong></div>
+                        <div><span>Trial Expires</span><strong>${formatDate(status.trial_expires_at)}</strong></div>
+                        <div><span>Days Remaining</span><strong>${status.days_remaining == null ? "-" : Number(status.days_remaining)}</strong></div>
+                    `}
+                    <div><span>Provisioning</span><strong>${escapeHtml(licenseCommandText(command))}</strong></div>
+                    <div><span>Mode</span><strong>${local ? "MAIN SERVER / LOCAL" : "REMOTE CABINET"}</strong></div>
+                </div>
+
+                ${status.offline ? `<div class="license-notice">License server verification is currently offline. Cached license rules are being used.</div>` : ""}
+                ${status.error ? `<div class="license-notice">Last verification: ${escapeHtml(status.error)}</div>` : ""}
+            </div>
+
+            <div class="panel">
+                <div class="panel-head"><h3>Feature Access</h3></div>
+                <div class="license-features">
+                    ${licenseFeatureRow("Borrow", Boolean(status.borrow_enabled))}
+                    ${licenseFeatureRow("Return", Boolean(status.return_enabled))}
+                    ${licenseFeatureRow("Consumable", Boolean(status.consume_enabled))}
+                    ${licenseFeatureRow("Central Sync", Boolean(status.sync_enabled))}
+                    ${local ? licenseFeatureRow("Web Admin Changes", Boolean(status.write_enabled)) : ""}
+                </div>
+            </div>
+        </div>
+
+        <div class="full-row panel license-activate-card">
+            <div class="panel-head">
+                <div>
+                    <h3>${lifetime ? "Lifetime License" : "Activate Lifetime License"}</h3>
+                    <p class="muted">
+                        ${local
+                            ? "This is Raspberry Pi 1, the Central Server and HMI Lab Cabinet. Activation is applied immediately."
+                            : "For a remote cabinet, the license is queued securely and applied automatically on the cabinet's next sync/heartbeat."}
+                    </p>
+                </div>
+                <button id="deviceLicenseVerifyBtn" class="btn ghost" type="button">Verify Now</button>
+            </div>
+
+            <label class="device-license-key-label">Lifetime License Key
+                <input
+                    name="license_key"
+                    autocomplete="off"
+                    placeholder="LOGI-XXXX-XXXX-XXXX-XXXX">
+            </label>
+
+            <div class="form-actions device-license-actions">
+                <button type="button" class="btn ghost" onclick="closeModal()">Close</button>
+                <button class="btn primary" type="submit">${lifetime ? "Activate / Replace License" : "Activate Lifetime"}</button>
+            </div>
+
+            <p class="muted license-security-note">
+                Only an Administrator can submit a license. For remote cabinets the full key is encrypted while queued on Raspberry Pi 1, delivered only to the authenticated target device, then removed from the Central queue after acknowledgement.
+            </p>
+        </div>`;
+}
+
+async function openDeviceLicense(deviceId) {
+    if (!isAdministrator()) {
+        toast("Administrator access required.");
+        return;
+    }
+
+    const encodedId = encodeURIComponent(deviceId);
+    const payload = await api(`/api/v1/admin/devices/${encodedId}/license`);
+
+    $("modal").classList.add("license-modal");
+
+    openModal(
+        "License Details",
+        deviceLicenseDetailsHtml(payload),
+        async form => {
+            const key = String(new FormData(form).get("license_key") || "").trim();
+            if (!key) {
+                toast("License key is required.");
+                return;
+            }
+
+            const result = await api(`/api/v1/admin/devices/${encodedId}/license/activate`, {
+                method: "POST",
+                body: JSON.stringify({ license_key: key })
+            });
+
+            if (result.mode === "QUEUED") {
+                toast("Lifetime activation queued. It will be applied on the device's next heartbeat.");
+            } else {
+                toast("Lifetime license activated.");
+            }
+
+            await loadDevices();
+            await openDeviceLicense(deviceId);
+        }
+    );
+
+    $("deviceLicenseVerifyBtn")?.addEventListener("click", async () => {
+        const button = $("deviceLicenseVerifyBtn");
+        button.disabled = true;
+        button.textContent = "Verifying...";
+
+        try {
+            const result = await api(`/api/v1/admin/devices/${encodedId}/license/verify`, {
+                method: "POST",
+                body: "{}"
+            });
+
+            toast(
+                result.mode === "QUEUED"
+                    ? "Verification queued. The cabinet will verify on its next heartbeat."
+                    : "License verified."
+            );
+
+            await loadDevices();
+            await openDeviceLicense(deviceId);
+        } catch (error) {
+            handleError(error);
+        } finally {
+            if (button) {
+                button.disabled = false;
+                button.textContent = "Verify Now";
+            }
+        }
+    });
+}
 
 /* =========================================================
    ADMIN USERS
@@ -1018,6 +1226,7 @@ async function loadDevices() {
                         ${metric("Last Seen", formatDate(d.last_seen_at))}
                         ${metric("Last Sync", formatDate(d.last_sync_at))}
                         ${metric("Paired", formatDate(d.paired_at))}
+                        ${metric("License", d.license_plan ? `${String(d.license_plan).toUpperCase()} · ${d.license_status || "-"}` : "-")}
                         ${metric("Tailscale IP", d.tailscale_ip || "-")}
                         ${metric("NFC", d.nfc_status || "-")}
                         ${metric("Camera", d.camera_status || "-")}
@@ -1030,6 +1239,9 @@ async function loadDevices() {
                     ${d.description ? `<p class="device-description">${escapeHtml(d.description)}</p>` : ""}
 
                     <div class="device-actions">
+                        <button class="btn primary small" data-device-license="${encodeURIComponent(d.device_id)}">
+                            License Details
+                        </button>
                         <button class="btn ghost small" data-device-pair="${encodeURIComponent(d.device_id)}">
                             ${d.paired_at ? "Re-pair" : "Pair"}
                         </button>
@@ -1043,6 +1255,12 @@ async function loadDevices() {
             `;
         }).join("")
         : `<div class="panel empty">No devices registered.</div>`;
+
+    document.querySelectorAll("[data-device-license]").forEach(button => {
+        button.addEventListener("click", () => {
+            openDeviceLicense(decodeURIComponent(button.dataset.deviceLicense)).catch(handleError);
+        });
+    });
 
     document.querySelectorAll("[data-device-pair]").forEach(button => {
         button.addEventListener("click", () => generateDevicePairing(decodeURIComponent(button.dataset.devicePair)));
@@ -1332,7 +1550,10 @@ function openModal(title, html, submitHandler = null) {
     };
 }
 
-function closeModal() { $("modal").classList.add("hidden"); }
+function closeModal() {
+    $("modal").classList.add("hidden");
+    $("modal").classList.remove("license-modal");
+}
 window.closeModal = closeModal;
 window.navigate = navigate;
 window.openNewItem = openNewItem;

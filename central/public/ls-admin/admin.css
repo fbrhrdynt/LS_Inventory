@@ -27,3 +27,42 @@
     opacity:.48;
     cursor:not-allowed;
 }
+
+/* License management */
+.topbar-badges{margin-left:auto;display:flex;align-items:center;gap:8px}
+.topbar-badges .status-pill{margin-left:0}
+.status-pill.warn{background:#fff4dc;color:var(--warn)}
+.license-grid{display:grid;grid-template-columns:1.35fr .65fr;gap:16px;margin-bottom:16px}
+.license-main-card{padding:22px}
+.license-plan-row{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:20px}
+.license-plan-row h3{margin:5px 0 0;font-size:30px}
+.license-meta-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.license-meta-grid>div{display:grid;gap:5px;padding:12px;background:var(--surface2);border-radius:12px;min-width:0}
+.license-meta-grid>div.full{grid-column:1/-1}
+.license-meta-grid span{font-size:10px;text-transform:uppercase;letter-spacing:.45px;color:var(--muted);font-weight:800}
+.license-meta-grid strong,.license-meta-grid code{font-size:12px;overflow-wrap:anywhere}
+.license-features{padding:14px 20px}
+.license-feature{display:flex;align-items:center;justify-content:space-between;gap:15px;padding:11px 0;border-bottom:1px solid var(--line);font-size:12px}
+.license-feature:last-child{border-bottom:0}
+.feature-ok{color:var(--good)}
+.feature-blocked{color:var(--danger)}
+.license-activate-card{padding-bottom:20px}
+.license-activate-card>.panel-head{margin-bottom:18px}
+.license-activate-card>.panel-head p{margin:5px 0 0;max-width:760px;line-height:1.5}
+.license-activate-form{display:grid;grid-template-columns:1fr auto;gap:12px;align-items:end;padding:0 20px}
+.license-security-note{padding:0 20px;margin:14px 0 0;line-height:1.5}
+.license-notice{margin-top:14px;padding:11px 13px;border-radius:11px;background:#fff8e8;color:#785300;font-size:11px}
+.badge.lifetime{background:#e8f7ef;color:var(--good)}
+.badge.trial{background:#fff4dc;color:var(--warn)}
+.badge.trial_expired{background:#feeeee;color:var(--danger)}
+@media(max-width:900px){.license-grid{grid-template-columns:1fr}.license-activate-form{grid-template-columns:1fr}.topbar-badges{gap:5px}.license-meta-grid{grid-template-columns:1fr}.license-meta-grid>div.full{grid-column:1}}
+
+/* Device-scoped license management */
+.modal.license-modal .modal-card{width:min(980px,100%)}
+.device-license-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;padding:2px 2px 4px}
+.device-license-heading h3{margin:4px 0 3px;font-size:22px}
+.device-license-heading p{margin:0;color:var(--muted);font-size:12px}
+.embedded-license-grid{margin-bottom:0}
+.device-license-key-label{padding:0 20px;display:grid;gap:7px}
+.device-license-actions{padding:0 20px;margin-top:14px}
+@media(max-width:900px){.modal.license-modal .modal-card{width:min(680px,100%)}.device-license-heading{flex-direction:column}.embedded-license-grid{grid-template-columns:1fr}}

@@ -252,7 +252,39 @@ function initCentralDatabase() {
     ensureColumn("devices", "description", "TEXT");
     ensureColumn("devices", "paired_at", "TEXT");
     ensureColumn("devices", "deleted_at", "TEXT");
+    ensureColumn("devices", "license_plan", "TEXT");
+    ensureColumn("devices", "license_status", "TEXT");
+    ensureColumn("devices", "license_fingerprint", "TEXT");
+    ensureColumn("devices", "license_last_verified_at", "TEXT");
+    ensureColumn("devices", "license_trial_expires_at", "TEXT");
+    ensureColumn("devices", "license_trial_started_at", "TEXT");
+    ensureColumn("devices", "license_days_remaining", "INTEGER");
+    ensureColumn("devices", "license_product_slug", "TEXT");
+    ensureColumn("devices", "license_hostname", "TEXT");
+    ensureColumn("devices", "license_key_masked", "TEXT");
+    ensureColumn("devices", "license_offline", "INTEGER NOT NULL DEFAULT 0");
+    ensureColumn("devices", "license_last_error", "TEXT");
     db.exec("CREATE INDEX IF NOT EXISTS idx_devices_active ON devices(active, deleted_at)");
+
+    db.exec(`
+        CREATE TABLE IF NOT EXISTS device_license_commands (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            device_id TEXT NOT NULL,
+            command TEXT NOT NULL,
+            payload_enc TEXT,
+            status TEXT NOT NULL DEFAULT 'PENDING',
+            created_by TEXT,
+            created_at TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
+            delivered_at TEXT,
+            completed_at TEXT,
+            result_json TEXT,
+            error_text TEXT,
+            FOREIGN KEY(device_id) REFERENCES devices(device_id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_device_license_commands_pending
+        ON device_license_commands(device_id, status, expires_at, id);
+    `);
 
     /*
      * Existing authenticated cabinets predate paired_at.

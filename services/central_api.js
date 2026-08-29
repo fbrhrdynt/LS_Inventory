@@ -8,6 +8,7 @@ require("dotenv").config({
 const fs = require("fs");
 const os = require("os");
 const { execFileSync } = require("child_process");
+const license = require("./license_service");
 
 const BASE_URL = String(process.env.CENTRAL_API_URL || "http://127.0.0.1:3100").replace(/\/$/, "");
 const DEVICE_ID = String(process.env.DEVICE_ID || process.env.DEVICE_NAME || "LS_Cab_Main").trim();
@@ -101,7 +102,75 @@ async function pushTransactions(transactions) {
     return request("/api/v1/device/transactions", { method: "POST", body: { transactions }, timeoutMs: 12000 });
 }
 
+
+async function processLicenseProvisioning() {
+    const pending = await request("/api/v1/device/license/provision", {
+        method: "GET",
+        timeoutMs: 7000
+    });
+
+    const command = pending?.command;
+    if (!command) return null;
+
+    let status = null;
+
+    try {
+        if (String(command.action || "").toUpperCase() === "ACTIVATE") {
+            const key = String(command.license_key || "").trim();
+            if (!key) throw new Error("LICENSE_KEY_NOT_DELIVERED");
+            const result = await license.activate(key);
+            status = result.status;
+        } else if (String(command.action || "").toUpperCase() === "VERIFY") {
+            status = await license.verify({ force: true });
+        } else {
+            throw new Error("UNKNOWN_LICENSE_COMMAND");
+        }
+
+        await request(`/api/v1/device/license/provision/${encodeURIComponent(command.id)}/ack`, {
+            method: "POST",
+            body: {
+                success: true,
+                license: license.publicStatus(status)
+            },
+            timeoutMs: 7000
+        });
+
+        return {
+            success: true,
+            command_id: command.id,
+            action: command.action,
+            license: license.publicStatus(status)
+        };
+
+    } catch (error) {
+        try {
+            await request(`/api/v1/device/license/provision/${encodeURIComponent(command.id)}/ack`, {
+                method: "POST",
+                body: {
+                    success: false,
+                    error: error.message,
+                    license: license.publicStatus(status || license.getCachedStatus())
+                },
+                timeoutMs: 7000
+            });
+        } catch (_) {}
+
+        throw error;
+    }
+}
+
 async function sendHeartbeat(extra = {}) {
+    /*
+     * Remote license commands are intentionally processed before heartbeat.
+     * This lets Web Admin on Raspberry Pi 1 provision a Lifetime license to
+     * Raspberry Pi 2/3/... without exposing the key in the device list.
+     */
+    try {
+        await processLicenseProvisioning();
+    } catch (error) {
+        console.error("License provisioning:", error.message);
+    }
+
     return request("/api/v1/device/heartbeat", {
         method: "POST",
         body: {
@@ -111,6 +180,7 @@ async function sendHeartbeat(extra = {}) {
             cpu_temperature: getCpuTemperature(),
             disk_usage: getDiskUsage(),
             uptime_seconds: Math.floor(os.uptime()),
+            ...license.heartbeatPayload(),
             ...extra
         }
     });
@@ -124,6 +194,7 @@ module.exports = {
     getSnapshot,
     pushTransactions,
     sendHeartbeat,
+    processLicenseProvisioning,
     getLocalIp,
     getTailscaleIp,
     getCpuTemperature,

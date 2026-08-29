@@ -11,6 +11,7 @@ const crypto = require("crypto");
 const os = require("os");
 const { spawn, execFile } = require("child_process");
 const QRCode = require("qrcode");
+const license = require("../services/license_service");
 
 const {
     db,
@@ -41,6 +42,175 @@ const PORT = Number(process.env.CENTRAL_PORT || 3100);
 const HOST = process.env.CENTRAL_HOST || "0.0.0.0";
 const SESSION_HOURS = Math.max(1, Number(process.env.ADMIN_SESSION_HOURS || 12));
 const PUBLIC_DIR = path.join(ROOT, "central", "public");
+const LOCAL_DEVICE_ID = String(
+    process.env.DEVICE_ID ||
+    process.env.DEVICE_NAME ||
+    "LS_Cab_Main"
+).trim();
+
+function provisioningSecret() {
+    const value = String(process.env.DEVICE_LICENSE_PROVISIONING_SECRET || "").trim();
+    if (!value) throw new Error("DEVICE_LICENSE_PROVISIONING_SECRET_NOT_CONFIGURED");
+    return crypto.createHash("sha256").update(value).digest();
+}
+
+function encryptProvisioningPayload(payload) {
+    const iv = crypto.randomBytes(12);
+    const cipher = crypto.createCipheriv("aes-256-gcm", provisioningSecret(), iv);
+    const plaintext = Buffer.from(JSON.stringify(payload || {}), "utf8");
+    const encrypted = Buffer.concat([cipher.update(plaintext), cipher.final()]);
+    const tag = cipher.getAuthTag();
+    return [iv, tag, encrypted].map(value => value.toString("base64url")).join(".");
+}
+
+function decryptProvisioningPayload(value) {
+    const parts = String(value || "").split(".");
+    if (parts.length !== 3) throw new Error("INVALID_LICENSE_PROVISIONING_PAYLOAD");
+    const [ivText, tagText, encryptedText] = parts;
+    const decipher = crypto.createDecipheriv(
+        "aes-256-gcm",
+        provisioningSecret(),
+        Buffer.from(ivText, "base64url")
+    );
+    decipher.setAuthTag(Buffer.from(tagText, "base64url"));
+    const decrypted = Buffer.concat([
+        decipher.update(Buffer.from(encryptedText, "base64url")),
+        decipher.final()
+    ]);
+    return JSON.parse(decrypted.toString("utf8"));
+}
+
+function getDeviceOrThrow(deviceId) {
+    const row = db.prepare(`
+        SELECT *
+        FROM devices
+        WHERE device_id=?
+          AND (deleted_at IS NULL OR TRIM(deleted_at)='')
+        LIMIT 1
+    `).get(String(deviceId || "").trim());
+    if (!row) throw new Error("DEVICE_NOT_FOUND");
+    return row;
+}
+
+function licenseAccessFromStatus(plan, status) {
+    const normalizedPlan = String(plan || "trial").toLowerCase();
+    const normalizedStatus = String(status || "TRIAL_ACTIVE").toUpperCase();
+    const lifetime = normalizedPlan === "lifetime";
+    const trialActive = normalizedStatus === "TRIAL_ACTIVE";
+    return {
+        borrow_enabled: lifetime || trialActive,
+        return_enabled: true,
+        consume_enabled: lifetime || trialActive,
+        sync_enabled: true,
+        write_enabled: lifetime || trialActive
+    };
+}
+
+function deviceLicenseStatus(row) {
+    const access = licenseAccessFromStatus(row.license_plan, row.license_status);
+    return {
+        plan: String(row.license_plan || "trial").toLowerCase(),
+        status: row.license_status || "TRIAL_ACTIVE",
+        fingerprint: row.license_fingerprint || null,
+        last_verified_at: row.license_last_verified_at || null,
+        trial_expires_at: row.license_trial_expires_at || null,
+        trial_started_at: row.license_trial_started_at || null,
+        days_remaining: row.license_days_remaining == null ? null : Number(row.license_days_remaining),
+        product_slug: row.license_product_slug || "ls-inventory-hmilab",
+        hostname: row.license_hostname || null,
+        license_key_masked: row.license_key_masked || null,
+        offline: Boolean(row.license_offline),
+        error: row.license_last_error || null,
+        ...access
+    };
+}
+
+function updateDeviceLicenseStatus(deviceId, status) {
+    const safe = status || {};
+    db.prepare(`
+        UPDATE devices SET
+            license_plan=?,
+            license_status=?,
+            license_fingerprint=?,
+            license_last_verified_at=?,
+            license_trial_expires_at=?,
+            license_trial_started_at=?,
+            license_days_remaining=?,
+            license_product_slug=?,
+            license_hostname=?,
+            license_key_masked=?,
+            license_offline=?,
+            license_last_error=?,
+            updated_at=?
+        WHERE device_id=?
+    `).run(
+        safe.plan ?? null,
+        safe.status ?? null,
+        safe.fingerprint ?? null,
+        safe.last_verified_at ?? null,
+        safe.trial_expires_at ?? null,
+        safe.trial_started_at ?? null,
+        safe.days_remaining ?? null,
+        safe.product_slug ?? null,
+        safe.hostname ?? null,
+        safe.license_key_masked ?? null,
+        safe.offline ? 1 : 0,
+        safe.error ?? null,
+        nowIso(),
+        deviceId
+    );
+}
+
+function latestDeviceLicenseCommand(deviceId) {
+    const row = db.prepare(`
+        SELECT id, device_id, command, status, created_by, created_at,
+               expires_at, delivered_at, completed_at, result_json, error_text
+        FROM device_license_commands
+        WHERE device_id=?
+        ORDER BY id DESC
+        LIMIT 1
+    `).get(deviceId);
+
+    if (!row) return null;
+    return {
+        ...row,
+        result: row.result_json ? JSON.parse(row.result_json) : null
+    };
+}
+
+function queueDeviceLicenseCommand(deviceId, action, payload, actor) {
+    const device = getDeviceOrThrow(deviceId);
+    if (!device.active) throw new Error("DEVICE_INACTIVE");
+
+    const command = String(action || "").trim().toUpperCase();
+    if (!["ACTIVATE", "VERIFY"].includes(command)) throw new Error("INVALID_LICENSE_COMMAND");
+
+    const ts = nowIso();
+    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+
+    db.prepare(`
+        UPDATE device_license_commands
+        SET status='CANCELLED', completed_at=?, error_text='SUPERSEDED'
+        WHERE device_id=? AND command=? AND status='PENDING'
+    `).run(ts, deviceId, command);
+
+    const payloadEnc = payload ? encryptProvisioningPayload(payload) : null;
+    const result = db.prepare(`
+        INSERT INTO device_license_commands(
+            device_id, command, payload_enc, status, created_by,
+            created_at, expires_at
+        ) VALUES (?, ?, ?, 'PENDING', ?, ?, ?)
+    `).run(deviceId, command, payloadEnc, actor || null, ts, expiresAt);
+
+    return {
+        id: Number(result.lastInsertRowid),
+        device_id: deviceId,
+        command,
+        status: "PENDING",
+        created_at: ts,
+        expires_at: expiresAt
+    };
+}
 
 const app = express();
 app.disable("x-powered-by");
@@ -179,6 +349,48 @@ function countOtherActiveAdministrators(adminId) {
 
     return rows.filter(row => isAdministratorRole(row.role)).length;
 }
+
+function requireWritableLicense(req, res, next) {
+    const status = license.getCachedStatus();
+
+    if (license.canAdminWrite(status)) {
+        return next();
+    }
+
+    return res.status(402).json({
+        success: false,
+        error: "LICENSE_TRIAL_EXPIRED",
+        message: "Trial license has expired. Web Admin is read-only until a Lifetime license is activated.",
+        license: license.publicStatus(status)
+    });
+}
+
+/*
+ * All Web Admin GET requests remain available after trial expiration so data
+ * can still be inspected. Mutations are blocked, except login/logout and
+ * license activation/verification.
+ */
+app.use("/api/v1/admin", (req, res, next) => {
+    if (["GET", "HEAD", "OPTIONS"].includes(req.method)) {
+        return next();
+    }
+
+    const allowed = new Set([
+        "/login",
+        "/logout",
+        "/license/activate",
+        "/license/verify"
+    ]);
+
+    if (
+        allowed.has(req.path) ||
+        /^\/devices\/[^/]+\/license(?:\/activate|\/verify)?$/.test(req.path)
+    ) {
+        return next();
+    }
+
+    return requireWritableLicense(req, res, next);
+});
 
 function requireDevice(req, res, next) {
     const deviceId = String(req.headers["x-device-id"] || "").trim();
@@ -565,7 +777,11 @@ app.post("/api/v1/admin/login", (req, res) => {
     audit("ADMIN", admin.username, "LOGIN", "ADMIN", admin.username, {});
 
     res.setHeader("Set-Cookie", `ls_admin_session=${encodeURIComponent(token)}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${SESSION_HOURS * 3600}`);
-    res.json({ success: true, user: { id: admin.id, username: admin.username, display_name: admin.display_name, role: admin.role } });
+    res.json({
+        success: true,
+        user: { id: admin.id, username: admin.username, display_name: admin.display_name, role: admin.role },
+        license: license.publicStatus(license.getCachedStatus())
+    });
 });
 
 app.post("/api/v1/admin/logout", requireAdmin, (req, res) => {
@@ -576,8 +792,79 @@ app.post("/api/v1/admin/logout", requireAdmin, (req, res) => {
 });
 
 app.get("/api/v1/admin/me", requireAdmin, (req, res) => {
-    res.json({ success: true, user: req.admin });
+    res.json({
+        success: true,
+        user: req.admin,
+        license: license.publicStatus(license.getCachedStatus())
+    });
 });
+
+app.get("/api/v1/admin/license", requireAdmin, async (req, res) => {
+    const status = await license.verify({ force: false });
+    res.json({
+        success: true,
+        data: license.publicStatus(status)
+    });
+});
+
+app.post(
+    "/api/v1/admin/license/verify",
+    requireAdmin,
+    requireAdministrator,
+    async (req, res, next) => {
+        try {
+            const status = await license.verify({ force: true });
+            audit("ADMIN", req.admin.username, "LICENSE_VERIFY", "LICENSE", status.fingerprint, {
+                plan: status.plan,
+                status: status.status,
+                product_slug: status.product_slug
+            });
+            res.json({ success: true, data: license.publicStatus(status) });
+        } catch (error) {
+            next(error);
+        }
+    }
+);
+
+app.post(
+    "/api/v1/admin/license/activate",
+    requireAdmin,
+    requireAdministrator,
+    async (req, res, next) => {
+        try {
+            const key = String(req.body?.license_key || "").trim();
+            if (!key) {
+                return res.status(400).json({ success: false, error: "LICENSE_KEY_REQUIRED" });
+            }
+
+            const result = await license.activate(key);
+            const status = result.status;
+
+            audit("ADMIN", req.admin.username, "LICENSE_ACTIVATE", "LICENSE", status.fingerprint, {
+                plan: status.plan,
+                status: status.status,
+                product_slug: status.product_slug
+            });
+
+            res.json({
+                success: true,
+                data: license.publicStatus(status)
+            });
+        } catch (error) {
+            if (["LICENSE_KEY_REQUIRED"].includes(error.message)) {
+                return res.status(400).json({ success: false, error: error.message });
+            }
+            if (error.remoteResponse) {
+                return res.status(error.status || 400).json({
+                    success: false,
+                    error: error.message,
+                    details: error.data || null
+                });
+            }
+            next(error);
+        }
+    }
+);
 
 app.get("/api/v1/admin/dashboard", requireAdmin, (req, res) => {
     const one = sql => Number(db.prepare(sql).get().c || 0);
@@ -873,6 +1160,18 @@ app.get("/api/v1/admin/devices", requireAdmin, requireAdministrator, (req, res) 
             d.last_sync_at,
             d.last_seen_at,
             d.paired_at,
+            d.license_plan,
+            d.license_status,
+            d.license_fingerprint,
+            d.license_last_verified_at,
+            d.license_trial_expires_at,
+            d.license_trial_started_at,
+            d.license_days_remaining,
+            d.license_product_slug,
+            d.license_hostname,
+            d.license_key_masked,
+            d.license_offline,
+            d.license_last_error,
             d.created_at,
             d.updated_at,
             (
@@ -887,7 +1186,10 @@ app.get("/api/v1/admin/devices", requireAdmin, requireAdministrator, (req, res) 
         FROM devices d
         WHERE d.deleted_at IS NULL OR TRIM(d.deleted_at)=''
         ORDER BY d.name COLLATE NOCASE
-    `).all(nowIso());
+    `).all(nowIso()).map(row => ({
+        ...row,
+        is_local_central: row.device_id === LOCAL_DEVICE_ID
+    }));
 
     res.json({ success: true, data });
 });
@@ -988,6 +1290,151 @@ app.post("/api/v1/admin/devices/:deviceId/pairing", requireAdmin, requireAdminis
     } catch (error) {
         if (error.message === "DEVICE_NOT_FOUND_OR_INACTIVE") {
             return res.status(404).json({ success: false, error: error.message });
+        }
+        next(error);
+    }
+});
+
+
+app.get("/api/v1/admin/devices/:deviceId/license", requireAdmin, requireAdministrator, async (req, res, next) => {
+    try {
+        const device = getDeviceOrThrow(req.params.deviceId);
+        let status;
+
+        if (device.device_id === LOCAL_DEVICE_ID) {
+            status = license.publicStatus(await license.verify({ force: false }));
+            updateDeviceLicenseStatus(device.device_id, status);
+        } else {
+            status = deviceLicenseStatus(device);
+        }
+
+        res.json({
+            success: true,
+            device: {
+                device_id: device.device_id,
+                name: device.name,
+                location: device.location,
+                site: device.site,
+                active: Boolean(device.active),
+                paired_at: device.paired_at,
+                last_seen_at: device.last_seen_at,
+                is_local_central: device.device_id === LOCAL_DEVICE_ID
+            },
+            license: status,
+            command: latestDeviceLicenseCommand(device.device_id)
+        });
+    } catch (error) {
+        if (error.message === "DEVICE_NOT_FOUND") {
+            return res.status(404).json({ success: false, error: error.message });
+        }
+        next(error);
+    }
+});
+
+app.post("/api/v1/admin/devices/:deviceId/license/activate", requireAdmin, requireAdministrator, async (req, res, next) => {
+    try {
+        const device = getDeviceOrThrow(req.params.deviceId);
+        const key = String(req.body?.license_key || "").trim();
+        if (!key) return res.status(400).json({ success: false, error: "LICENSE_KEY_REQUIRED" });
+
+        if (device.device_id === LOCAL_DEVICE_ID) {
+            const result = await license.activate(key);
+            const status = license.publicStatus(result.status);
+            updateDeviceLicenseStatus(device.device_id, status);
+            audit("ADMIN", req.admin.username, "DEVICE_LICENSE_ACTIVATE", "DEVICE", device.device_id, {
+                mode: "DIRECT",
+                plan: status.plan,
+                status: status.status,
+                fingerprint: status.fingerprint
+            });
+            return res.json({
+                success: true,
+                mode: "DIRECT",
+                device_id: device.device_id,
+                license: status
+            });
+        }
+
+        const command = queueDeviceLicenseCommand(
+            device.device_id,
+            "ACTIVATE",
+            { license_key: key },
+            req.admin.username
+        );
+
+        audit("ADMIN", req.admin.username, "DEVICE_LICENSE_ACTIVATE_QUEUED", "DEVICE", device.device_id, {
+            command_id: command.id
+        });
+
+        res.status(202).json({
+            success: true,
+            mode: "QUEUED",
+            device_id: device.device_id,
+            command,
+            message: "License activation queued. The cabinet will apply it on its next heartbeat."
+        });
+    } catch (error) {
+        if (["DEVICE_NOT_FOUND"].includes(error.message)) {
+            return res.status(404).json({ success: false, error: error.message });
+        }
+        if (["DEVICE_INACTIVE", "LICENSE_KEY_REQUIRED", "DEVICE_LICENSE_PROVISIONING_SECRET_NOT_CONFIGURED"].includes(error.message)) {
+            return res.status(400).json({ success: false, error: error.message });
+        }
+        if (error.remoteResponse) {
+            return res.status(error.status || 400).json({
+                success: false,
+                error: error.message,
+                details: error.data || null
+            });
+        }
+        next(error);
+    }
+});
+
+app.post("/api/v1/admin/devices/:deviceId/license/verify", requireAdmin, requireAdministrator, async (req, res, next) => {
+    try {
+        const device = getDeviceOrThrow(req.params.deviceId);
+
+        if (device.device_id === LOCAL_DEVICE_ID) {
+            const status = license.publicStatus(await license.verify({ force: true }));
+            updateDeviceLicenseStatus(device.device_id, status);
+            audit("ADMIN", req.admin.username, "DEVICE_LICENSE_VERIFY", "DEVICE", device.device_id, {
+                mode: "DIRECT",
+                plan: status.plan,
+                status: status.status
+            });
+            return res.json({
+                success: true,
+                mode: "DIRECT",
+                device_id: device.device_id,
+                license: status
+            });
+        }
+
+        const command = queueDeviceLicenseCommand(
+            device.device_id,
+            "VERIFY",
+            null,
+            req.admin.username
+        );
+
+        audit("ADMIN", req.admin.username, "DEVICE_LICENSE_VERIFY_QUEUED", "DEVICE", device.device_id, {
+            command_id: command.id
+        });
+
+        res.status(202).json({
+            success: true,
+            mode: "QUEUED",
+            device_id: device.device_id,
+            command,
+            message: "License verification queued."
+        });
+    } catch (error) {
+        if (error.message === "DEVICE_NOT_FOUND") {
+            return res.status(404).json({ success: false, error: error.message });
+        }
+        if (["DEVICE_INACTIVE", "DEVICE_LICENSE_PROVISIONING_SECRET_NOT_CONFIGURED"].includes(error.message)) {
+            return res.status(400).json({ success: false, error: error.message });
         }
         next(error);
     }
@@ -1709,6 +2156,110 @@ app.post("/api/v1/device/pair", (req, res, next) => {
     }
 });
 
+
+app.get("/api/v1/device/license/provision", requireDevice, (req, res, next) => {
+    try {
+        const ts = nowIso();
+
+        db.prepare(`
+            UPDATE device_license_commands
+            SET status='EXPIRED', completed_at=?, error_text='COMMAND_EXPIRED'
+            WHERE device_id=?
+              AND status IN ('PENDING','PROCESSING')
+              AND expires_at<=?
+        `).run(ts, req.device.device_id, ts);
+
+        const row = db.prepare(`
+            SELECT *
+            FROM device_license_commands
+            WHERE device_id=?
+              AND status IN ('PENDING','PROCESSING')
+              AND expires_at>?
+            ORDER BY id ASC
+            LIMIT 1
+        `).get(req.device.device_id, ts);
+
+        if (!row) {
+            return res.json({ success: true, command: null, server_time: ts });
+        }
+
+        if (row.status === 'PENDING') {
+            db.prepare(`
+                UPDATE device_license_commands
+                SET status='PROCESSING', delivered_at=COALESCE(delivered_at, ?)
+                WHERE id=?
+            `).run(ts, row.id);
+        }
+
+        const command = {
+            id: Number(row.id),
+            action: row.command,
+            created_at: row.created_at,
+            expires_at: row.expires_at
+        };
+
+        if (row.command === 'ACTIVATE') {
+            const payload = decryptProvisioningPayload(row.payload_enc);
+            command.license_key = String(payload.license_key || '').trim();
+        }
+
+        res.json({ success: true, command, server_time: ts });
+    } catch (error) {
+        next(error);
+    }
+});
+
+app.post("/api/v1/device/license/provision/:commandId/ack", requireDevice, (req, res, next) => {
+    try {
+        const id = Number(req.params.commandId);
+        if (!Number.isInteger(id) || id < 1) {
+            return res.status(400).json({ success: false, error: "INVALID_LICENSE_COMMAND_ID" });
+        }
+
+        const command = db.prepare(`
+            SELECT *
+            FROM device_license_commands
+            WHERE id=? AND device_id=?
+            LIMIT 1
+        `).get(id, req.device.device_id);
+
+        if (!command) {
+            return res.status(404).json({ success: false, error: "LICENSE_COMMAND_NOT_FOUND" });
+        }
+
+        const body = req.body || {};
+        const success = Boolean(body.success);
+        const status = body.license && typeof body.license === "object" ? body.license : {};
+        const ts = nowIso();
+
+        db.prepare(`
+            UPDATE device_license_commands
+            SET status=?, completed_at=?, result_json=?, error_text=?, payload_enc=NULL
+            WHERE id=?
+        `).run(
+            success ? "SUCCESS" : "FAILED",
+            ts,
+            JSON.stringify(status),
+            success ? null : String(body.error || "LICENSE_COMMAND_FAILED"),
+            id
+        );
+
+        if (Object.keys(status).length) {
+            updateDeviceLicenseStatus(req.device.device_id, status);
+        }
+
+        audit("DEVICE", req.device.device_id, success ? "LICENSE_COMMAND_SUCCESS" : "LICENSE_COMMAND_FAILED", "DEVICE", req.device.device_id, {
+            command_id: id,
+            command: command.command,
+            error: success ? null : String(body.error || "LICENSE_COMMAND_FAILED")
+        });
+
+        res.json({ success: true, server_time: ts });
+    } catch (error) {
+        next(error);
+    }
+});
+
 app.get("/api/v1/device/snapshot/:entity", requireDevice, (req, res) => {
     const entity = normalize(req.params.entity);
     const page = safePage(req.query.page);
@@ -1760,6 +2311,17 @@ app.post("/api/v1/device/heartbeat", requireDevice, (req, res) => {
             disk_usage=COALESCE(?,disk_usage), uptime_seconds=COALESCE(?,uptime_seconds),
             nfc_status=COALESCE(?,nfc_status), camera_status=COALESCE(?,camera_status),
             pending_count=COALESCE(?,pending_count), last_sync_at=COALESCE(?,last_sync_at),
+            license_plan=COALESCE(?,license_plan), license_status=COALESCE(?,license_status),
+            license_fingerprint=COALESCE(?,license_fingerprint),
+            license_last_verified_at=COALESCE(?,license_last_verified_at),
+            license_trial_expires_at=COALESCE(?,license_trial_expires_at),
+            license_trial_started_at=COALESCE(?,license_trial_started_at),
+            license_days_remaining=COALESCE(?,license_days_remaining),
+            license_product_slug=COALESCE(?,license_product_slug),
+            license_hostname=COALESCE(?,license_hostname),
+            license_key_masked=COALESCE(?,license_key_masked),
+            license_offline=COALESCE(?,license_offline),
+            license_last_error=?,
             paired_at=COALESCE(paired_at, ?),
             last_seen_at=?, updated_at=?
         WHERE device_id=?
@@ -1774,6 +2336,18 @@ app.post("/api/v1/device/heartbeat", requireDevice, (req, res) => {
         body.camera_status ?? null,
         body.pending_count ?? null,
         body.last_sync_at ?? null,
+        body.license_plan ?? null,
+        body.license_status ?? null,
+        body.license_fingerprint ?? null,
+        body.license_last_verified_at ?? null,
+        body.license_trial_expires_at ?? null,
+        body.license_trial_started_at ?? null,
+        body.license_days_remaining ?? null,
+        body.license_product_slug ?? null,
+        body.license_hostname ?? null,
+        body.license_key_masked ?? null,
+        body.license_offline ?? null,
+        body.license_last_error ?? null,
         ts,
         ts,
         ts,
@@ -1809,4 +2383,18 @@ app.listen(PORT, HOST, () => {
     console.log(`Health   : http://${HOST}:${PORT}/health`);
     console.log("========================================");
     console.log("");
+
+    license.verify({ force: false })
+        .then(status => {
+            console.log(`License  : ${String(status.plan).toUpperCase()} / ${status.status}`);
+        })
+        .catch(error => {
+            console.error("License verification:", error.message);
+        });
 });
+
+setInterval(() => {
+    license.verify({ force: true }).catch(error => {
+        console.error("Scheduled license verification:", error.message);
+    });
+}, 6 * 60 * 60 * 1000).unref();
