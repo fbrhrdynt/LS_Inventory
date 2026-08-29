@@ -1,0 +1,1812 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+
+    <meta charset="UTF-8">
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0">
+
+    <title>
+        <%= appName %>
+    </title>
+
+    <link
+        rel="stylesheet"
+        href="/css/style.css">
+
+</head>
+
+
+<body>
+
+<main class="container">
+
+    <section class="card">
+
+
+        <!-- =====================================================
+             HEADER
+        ====================================================== -->
+
+        <header class="header">
+
+            <div class="logo">
+                LS
+            </div>
+
+
+            <div class="header-text">
+
+                <h1 id="systemNameText">
+                    <%= appName %>
+                </h1>
+
+
+                <p id="deviceNameText">
+                    <%= deviceName %>
+                </p>
+
+            </div>
+
+        </header>
+
+
+        <div class="divider"></div>
+
+
+        <!-- =====================================================
+             NFC LOGIN
+        ====================================================== -->
+
+        <section
+            id="loginScreen"
+            class="screen">
+
+            <div class="nfc-circle">
+                NFC
+            </div>
+
+
+            <h2>
+                Tap Your Card
+            </h2>
+
+
+            <p class="subtitle">
+
+                Tempelkan kartu NFC Anda
+                pada reader
+
+            </p>
+
+        </section>
+
+
+        <!-- =====================================================
+             USER MENU
+        ====================================================== -->
+
+        <section
+            id="menuScreen"
+            class="screen hidden">
+
+            <div class="badge success">
+
+                USER AUTHENTICATED
+
+            </div>
+
+
+            <h2 id="welcome">
+
+                Welcome
+
+            </h2>
+
+
+            <p
+                id="userRole"
+                class="subtitle">
+
+                -
+
+            </p>
+
+
+            <div class="menu-grid">
+
+
+                <!-- BORROW -->
+
+                <button
+                    class="menu-button"
+                    onclick="selectMenu('borrow')">
+
+                    <div class="menu-icon">
+                        ↓
+                    </div>
+
+                    <div>
+                        Borrow
+                    </div>
+
+                </button>
+
+
+                <!-- RETURN -->
+
+                <button
+                    class="menu-button"
+                    onclick="selectMenu('return')">
+
+                    <div class="menu-icon">
+                        ↑
+                    </div>
+
+                    <div>
+                        Return
+                    </div>
+
+                </button>
+
+
+                <!-- CONSUMABLE -->
+
+                <button
+                    class="menu-button"
+                    onclick="selectMenu('consume')">
+
+                    <div class="menu-icon">
+                        −
+                    </div>
+
+                    <div>
+                        Consumable
+                    </div>
+
+                </button>
+
+            </div>
+
+
+            <button
+                class="secondary-button"
+                onclick="logout()">
+
+                Logout
+
+            </button>
+
+        </section>
+
+
+        <!-- =====================================================
+             CAMERA / QR
+        ====================================================== -->
+
+        <section
+            id="scanScreen"
+            class="screen hidden">
+
+            <div class="badge camera">
+
+                CAMERA ACTIVE
+
+            </div>
+
+
+            <h2>
+
+                Scan Item
+
+            </h2>
+
+
+            <div class="camera-box">
+
+
+                <img
+                    id="cameraPreview"
+                    class="camera-preview"
+                    alt="Camera Preview">
+
+
+                <!-- QR TARGET -->
+
+                <div class="camera-overlay">
+
+
+                    <div
+                        class="
+                            scan-corner
+                            scan-top-left">
+                    </div>
+
+
+                    <div
+                        class="
+                            scan-corner
+                            scan-top-right">
+                    </div>
+
+
+                    <div
+                        class="
+                            scan-corner
+                            scan-bottom-left">
+                    </div>
+
+
+                    <div
+                        class="
+                            scan-corner
+                            scan-bottom-right">
+                    </div>
+
+
+                </div>
+
+
+                <!-- CAMERA LOADING -->
+
+                <div
+                    id="cameraLoading"
+                    class="camera-loading">
+
+                    Starting Camera...
+
+                </div>
+
+
+            </div>
+
+
+            <p
+                id="scanMessage"
+                class="subtitle">
+
+                Starting camera...
+
+            </p>
+
+
+            <div class="loading-dots">
+
+                <span></span>
+                <span></span>
+                <span></span>
+
+            </div>
+
+
+            <button
+                class="secondary-button"
+                onclick="cancelScan()">
+
+                Cancel
+
+            </button>
+
+        </section>
+
+
+        <!-- =====================================================
+             ITEM DETAIL
+        ====================================================== -->
+
+        <section
+            id="itemScreen"
+            class="screen hidden">
+
+            <div class="badge success">
+
+                ITEM DETECTED
+
+            </div>
+
+
+            <h2>
+
+                Item Detail
+
+            </h2>
+
+
+            <div class="item-card">
+
+
+                <div class="item-row">
+
+                    <span>
+                        Item Name
+                    </span>
+
+                    <strong
+                        id="itemName">
+
+                        -
+
+                    </strong>
+
+                </div>
+
+
+                <div class="item-row">
+
+                    <span>
+                        Item Code
+                    </span>
+
+                    <strong
+                        id="itemCode">
+
+                        -
+
+                    </strong>
+
+                </div>
+
+
+                <div class="item-row">
+
+                    <span>
+                        UUID
+                    </span>
+
+                    <strong
+                        id="itemUUID">
+
+                        -
+
+                    </strong>
+
+                </div>
+
+
+                <div class="item-row">
+
+                    <span>
+                        Status
+                    </span>
+
+                    <strong
+                        id="itemStatus">
+
+                        -
+
+                    </strong>
+
+                </div>
+
+
+                <div class="item-row">
+
+                    <span>
+                        Category
+                    </span>
+
+                    <strong
+                        id="itemCategory">
+
+                        -
+
+                    </strong>
+
+                </div>
+
+
+                <div class="item-row">
+
+                    <span>
+                        Location
+                    </span>
+
+                    <strong
+                        id="itemLocation">
+
+                        -
+
+                    </strong>
+
+                </div>
+
+
+            </div>
+
+
+            <button
+                id="confirmBorrowButton"
+                class="primary-button"
+                onclick="confirmBorrow()">
+
+                Confirm Borrow
+
+            </button>
+
+
+            <button
+                class="secondary-button"
+                onclick="cancelItem()">
+
+                Cancel
+
+            </button>
+
+        </section>
+
+
+        <!-- =====================================================
+             BORROW SUCCESS
+        ====================================================== -->
+
+        <section
+            id="successScreen"
+            class="screen hidden">
+
+            <div class="success-circle">
+
+                ✓
+
+            </div>
+
+
+            <h2>
+
+                Borrow Successful
+
+            </h2>
+
+
+            <p
+                id="successMessage"
+                class="subtitle">
+
+                Borrow berhasil.
+
+            </p>
+
+
+            <button
+                class="primary-button"
+                onclick="backToMenu()">
+
+                Back to Menu
+
+            </button>
+
+
+            <button
+                class="secondary-button"
+                onclick="logout()">
+
+                Logout
+
+            </button>
+
+        </section>
+
+
+        <!-- =====================================================
+             ERROR
+        ====================================================== -->
+
+        <section
+            id="errorScreen"
+            class="screen hidden">
+
+            <div class="error-circle">
+
+                !
+
+            </div>
+
+
+            <h2>
+
+                Error
+
+            </h2>
+
+
+            <p
+                id="errorMessage"
+                class="subtitle">
+
+                Something went wrong.
+
+            </p>
+
+
+            <button
+                class="secondary-button"
+                onclick="backToMenu()">
+
+                Back
+
+            </button>
+
+        </section>
+
+
+        <!-- =====================================================
+             STATUS BAR
+        ====================================================== -->
+
+        <footer class="status-bar">
+
+
+            <div class="status-left">
+
+
+                <span
+                    id="statusDot"
+                    class="status-dot">
+                </span>
+
+
+                <span
+                    id="systemStatus">
+
+                    System Ready
+
+                </span>
+
+
+            </div>
+
+
+            <div
+                id="versionText"
+                class="status-right">
+
+                v<%= version %>
+
+            </div>
+
+
+        </footer>
+
+
+    </section>
+
+</main>
+
+
+<!-- =========================================================
+     SOCKET.IO
+========================================================= -->
+
+<script
+    src="/socket.io/socket.io.js">
+</script>
+
+
+<script>
+
+/*
+ * =========================================================
+ * SOCKET
+ * =========================================================
+ */
+
+const socket =
+    io();
+
+
+/*
+ * =========================================================
+ * ELEMENTS
+ * =========================================================
+ */
+
+const systemNameText =
+    document.getElementById(
+        "systemNameText"
+    );
+
+
+const deviceNameText =
+    document.getElementById(
+        "deviceNameText"
+    );
+
+
+const versionText =
+    document.getElementById(
+        "versionText"
+    );
+
+
+const loginScreen =
+    document.getElementById(
+        "loginScreen"
+    );
+
+
+const menuScreen =
+    document.getElementById(
+        "menuScreen"
+    );
+
+
+const scanScreen =
+    document.getElementById(
+        "scanScreen"
+    );
+
+
+const itemScreen =
+    document.getElementById(
+        "itemScreen"
+    );
+
+
+const successScreen =
+    document.getElementById(
+        "successScreen"
+    );
+
+
+const errorScreen =
+    document.getElementById(
+        "errorScreen"
+    );
+
+
+const welcome =
+    document.getElementById(
+        "welcome"
+    );
+
+
+const userRole =
+    document.getElementById(
+        "userRole"
+    );
+
+
+const cameraPreview =
+    document.getElementById(
+        "cameraPreview"
+    );
+
+
+const cameraLoading =
+    document.getElementById(
+        "cameraLoading"
+    );
+
+
+const scanMessage =
+    document.getElementById(
+        "scanMessage"
+    );
+
+
+const itemName =
+    document.getElementById(
+        "itemName"
+    );
+
+
+const itemCode =
+    document.getElementById(
+        "itemCode"
+    );
+
+
+const itemUUID =
+    document.getElementById(
+        "itemUUID"
+    );
+
+
+const itemStatus =
+    document.getElementById(
+        "itemStatus"
+    );
+
+
+const itemCategory =
+    document.getElementById(
+        "itemCategory"
+    );
+
+
+const itemLocation =
+    document.getElementById(
+        "itemLocation"
+    );
+
+
+const successMessage =
+    document.getElementById(
+        "successMessage"
+    );
+
+
+const errorMessage =
+    document.getElementById(
+        "errorMessage"
+    );
+
+
+const statusDot =
+    document.getElementById(
+        "statusDot"
+    );
+
+
+const systemStatus =
+    document.getElementById(
+        "systemStatus"
+    );
+
+
+const confirmBorrowButton =
+    document.getElementById(
+        "confirmBorrowButton"
+    );
+
+
+/*
+ * =========================================================
+ * SESSION
+ * =========================================================
+ */
+
+let currentUser =
+    null;
+
+
+let currentItem =
+    null;
+
+
+let currentMenu =
+    null;
+
+
+let borrowProcessing =
+    false;
+
+
+/*
+ * =========================================================
+ * SCREEN HELPER
+ * =========================================================
+ */
+
+function hideScreens() {
+
+    loginScreen.classList.add(
+        "hidden"
+    );
+
+    menuScreen.classList.add(
+        "hidden"
+    );
+
+    scanScreen.classList.add(
+        "hidden"
+    );
+
+    itemScreen.classList.add(
+        "hidden"
+    );
+
+    successScreen.classList.add(
+        "hidden"
+    );
+
+    errorScreen.classList.add(
+        "hidden"
+    );
+
+}
+
+
+function showLogin() {
+
+    hideScreens();
+
+
+    loginScreen.classList.remove(
+        "hidden"
+    );
+
+}
+
+
+function showMenu() {
+
+    hideScreens();
+
+
+    menuScreen.classList.remove(
+        "hidden"
+    );
+
+}
+
+
+function showScan() {
+
+    hideScreens();
+
+
+    scanScreen.classList.remove(
+        "hidden"
+    );
+
+}
+
+
+function showItem() {
+
+    hideScreens();
+
+
+    itemScreen.classList.remove(
+        "hidden"
+    );
+
+}
+
+
+function showSuccess() {
+
+    hideScreens();
+
+
+    successScreen.classList.remove(
+        "hidden"
+    );
+
+}
+
+
+function showError(
+    message
+) {
+
+    hideScreens();
+
+
+    errorMessage.innerText =
+        message
+        || "Unknown error";
+
+
+    errorScreen.classList.remove(
+        "hidden"
+    );
+
+
+    setStatus(
+        "Error",
+        "error"
+    );
+
+}
+
+
+/*
+ * =========================================================
+ * STATUS
+ * =========================================================
+ */
+
+function setStatus(
+    text,
+    state
+) {
+
+    systemStatus.innerText =
+        text;
+
+
+    statusDot.className =
+        "status-dot";
+
+
+    if (
+        state
+    ) {
+
+        statusDot.classList.add(
+            state
+        );
+
+    }
+
+}
+
+
+/*
+ * =========================================================
+ * CAMERA
+ * =========================================================
+ */
+
+function clearCamera() {
+
+    cameraPreview.onload =
+        null;
+
+
+    cameraPreview.onerror =
+        null;
+
+
+    cameraPreview.src =
+        "";
+
+}
+
+
+function openCameraStream() {
+
+    cameraLoading.style.display =
+        "flex";
+
+
+    cameraLoading.innerText =
+        "Loading Camera...";
+
+
+    cameraPreview.onload =
+        () => {
+
+            cameraLoading.style.display =
+                "none";
+
+        };
+
+
+    cameraPreview.onerror =
+        () => {
+
+            cameraLoading.style.display =
+                "flex";
+
+
+            cameraLoading.innerText =
+                "Camera connection failed";
+
+
+            scanMessage.innerText =
+                "Camera stream tidak tersedia";
+
+
+            setStatus(
+                "Camera Error",
+                "error"
+            );
+
+        };
+
+
+    cameraPreview.src =
+        "/camera/stream?t="
+        + Date.now();
+
+}
+
+
+/*
+ * =========================================================
+ * SYSTEM CONFIG FROM ADMIN SHEET
+ * =========================================================
+ */
+
+function applySystemConfig(
+    config
+) {
+
+    if (
+        !config
+    ) {
+
+        return;
+
+    }
+
+
+    const systemName =
+        config.systemName
+        || "LS Inventory";
+
+
+    const deviceName =
+        config.deviceName
+        || "LS Cabinet 01";
+
+
+    const version =
+        config.version
+        || "1.0.0";
+
+
+    systemNameText.innerText =
+        systemName;
+
+
+    deviceNameText.innerText =
+        deviceName;
+
+
+    versionText.innerText =
+        "v"
+        + version;
+
+
+    document.title =
+        systemName;
+
+}
+
+
+socket.on(
+    "system-config",
+    config => {
+
+        applySystemConfig(
+            config
+        );
+
+    }
+);
+
+
+/*
+ * =========================================================
+ * NFC USER
+ * =========================================================
+ */
+
+socket.on(
+    "nfc-user",
+    user => {
+
+        currentUser =
+            user;
+
+
+        welcome.innerText =
+            "Welcome, "
+            + (
+                user.NAME
+                || "User"
+            );
+
+
+        userRole.innerText =
+            user.ROLE
+            || "USER";
+
+
+        setStatus(
+            "User Authenticated",
+            "ready"
+        );
+
+
+        showMenu();
+
+    }
+);
+
+
+/*
+ * =========================================================
+ * LOGOUT RESPONSE
+ * =========================================================
+ */
+
+socket.on(
+    "user-logout",
+    () => {
+
+        clearCamera();
+
+
+        currentUser =
+            null;
+
+
+        currentItem =
+            null;
+
+
+        currentMenu =
+            null;
+
+
+        borrowProcessing =
+            false;
+
+
+        setStatus(
+            "System Ready",
+            "ready"
+        );
+
+
+        showLogin();
+
+    }
+);
+
+
+/*
+ * =========================================================
+ * BORROW SCAN START
+ * =========================================================
+ */
+
+socket.on(
+    "borrow-scan-start",
+    () => {
+
+        currentMenu =
+            "borrow";
+
+
+        currentItem =
+            null;
+
+
+        borrowProcessing =
+            false;
+
+
+        clearCamera();
+
+
+        cameraLoading.style.display =
+            "flex";
+
+
+        cameraLoading.innerText =
+            "Starting Camera...";
+
+
+        scanMessage.innerText =
+            "Starting camera...";
+
+
+        setStatus(
+            "Starting Camera",
+            "busy"
+        );
+
+
+        showScan();
+
+    }
+);
+
+
+/*
+ * =========================================================
+ * CAMERA READY
+ * =========================================================
+ */
+
+socket.on(
+    "camera-ready",
+    () => {
+
+        scanMessage.innerText =
+            "Arahkan QR barang ke dalam kotak";
+
+
+        setStatus(
+            "Scanning QR",
+            "busy"
+        );
+
+
+        setTimeout(
+            () => {
+
+                openCameraStream();
+
+            },
+            250
+        );
+
+    }
+);
+
+
+/*
+ * =========================================================
+ * QR ITEM FOUND
+ * =========================================================
+ */
+
+socket.on(
+    "qr-item",
+    item => {
+
+        currentItem =
+            item;
+
+
+        clearCamera();
+
+
+        itemName.innerText =
+            item.ITEM_NAME
+            || item.NAME
+            || "-";
+
+
+        itemCode.innerText =
+            item.ITEM_CODE
+            || "-";
+
+
+        itemUUID.innerText =
+            item.UUID
+            || "-";
+
+
+        itemStatus.innerText =
+            item.STATUS
+            || "-";
+
+
+        itemCategory.innerText =
+            item.CATEGORY
+            || item.TYPE
+            || "-";
+
+
+        itemLocation.innerText =
+            item.LOCATION
+            || "-";
+
+
+        confirmBorrowButton.disabled =
+            false;
+
+
+        confirmBorrowButton.innerText =
+            "Confirm Borrow";
+
+
+        borrowProcessing =
+            false;
+
+
+        setStatus(
+            "Item Detected",
+            "ready"
+        );
+
+
+        showItem();
+
+    }
+);
+
+
+/*
+ * =========================================================
+ * QR ERROR
+ * =========================================================
+ */
+
+socket.on(
+    "qr-error",
+    data => {
+
+        scanMessage.innerText =
+            data?.message
+            || "QR tidak valid";
+
+
+        setStatus(
+            "QR Error",
+            "error"
+        );
+
+    }
+);
+
+
+/*
+ * =========================================================
+ * BORROW SUCCESS
+ * =========================================================
+ */
+
+socket.on(
+    "borrow-success",
+    data => {
+
+        borrowProcessing =
+            false;
+
+
+        confirmBorrowButton.disabled =
+            false;
+
+
+        confirmBorrowButton.innerText =
+            "Confirm Borrow";
+
+
+        clearCamera();
+
+
+        const transaction =
+            data.transaction;
+
+
+        const itemLabel =
+            transaction.itemName
+            || transaction.itemCode
+            || transaction.itemUUID
+            || "Item";
+
+
+        if (
+            data.pending
+        ) {
+
+            successMessage.innerHTML =
+                "<strong>"
+                + escapeHTML(
+                    itemLabel
+                )
+                + "</strong>"
+                + "<br><br>"
+                + "Borrow berhasil disimpan."
+                + "<br>"
+                + "Transaction ID:"
+                + "<br>"
+                + "<strong>"
+                + escapeHTML(
+                    transaction.transactionId
+                )
+                + "</strong>"
+                + "<br><br>"
+                + "Status: "
+                + "<strong>PENDING SYNC</strong>";
+
+
+            setStatus(
+                "Pending Sync",
+                "busy"
+            );
+
+        }
+        else {
+
+            successMessage.innerHTML =
+                "<strong>"
+                + escapeHTML(
+                    itemLabel
+                )
+                + "</strong>"
+                + "<br><br>"
+                + "Borrow berhasil."
+                + "<br>"
+                + "Transaction ID:"
+                + "<br>"
+                + "<strong>"
+                + escapeHTML(
+                    transaction.transactionId
+                )
+                + "</strong>"
+                + "<br><br>"
+                + "Status: "
+                + "<strong>SYNCED</strong>";
+
+
+            setStatus(
+                "Borrow Success",
+                "ready"
+            );
+
+        }
+
+
+        currentItem =
+            null;
+
+
+        currentMenu =
+            null;
+
+
+        showSuccess();
+
+    }
+);
+
+
+/*
+ * =========================================================
+ * SYSTEM ERROR
+ * =========================================================
+ */
+
+socket.on(
+    "system-error",
+    data => {
+
+        borrowProcessing =
+            false;
+
+
+        confirmBorrowButton.disabled =
+            false;
+
+
+        confirmBorrowButton.innerText =
+            "Confirm Borrow";
+
+
+        clearCamera();
+
+
+        showError(
+            data?.message
+            || "System error"
+        );
+
+    }
+);
+
+
+/*
+ * =========================================================
+ * SELECT MENU
+ * =========================================================
+ */
+
+function selectMenu(
+    menu
+) {
+
+    if (
+        !currentUser
+    ) {
+
+        showError(
+            "User belum login."
+        );
+
+        return;
+
+    }
+
+
+    currentMenu =
+        menu;
+
+
+    socket.emit(
+        "select-menu",
+        menu
+    );
+
+}
+
+
+/*
+ * =========================================================
+ * CANCEL SCAN
+ * =========================================================
+ */
+
+function cancelScan() {
+
+    clearCamera();
+
+
+    socket.emit(
+        "cancel-scan"
+    );
+
+
+    currentItem =
+        null;
+
+
+    currentMenu =
+        null;
+
+
+    setStatus(
+        "User Authenticated",
+        "ready"
+    );
+
+
+    showMenu();
+
+}
+
+
+/*
+ * =========================================================
+ * CANCEL ITEM
+ * =========================================================
+ */
+
+function cancelItem() {
+
+    clearCamera();
+
+
+    currentItem =
+        null;
+
+
+    currentMenu =
+        null;
+
+
+    borrowProcessing =
+        false;
+
+
+    confirmBorrowButton.disabled =
+        false;
+
+
+    confirmBorrowButton.innerText =
+        "Confirm Borrow";
+
+
+    setStatus(
+        "User Authenticated",
+        "ready"
+    );
+
+
+    showMenu();
+
+}
+
+
+/*
+ * =========================================================
+ * CONFIRM BORROW
+ * =========================================================
+ */
+
+function confirmBorrow() {
+
+    if (
+        borrowProcessing
+    ) {
+
+        return;
+
+    }
+
+
+    if (
+        !currentItem
+    ) {
+
+        showError(
+            "Item belum dipilih."
+        );
+
+        return;
+
+    }
+
+
+    borrowProcessing =
+        true;
+
+
+    confirmBorrowButton.disabled =
+        true;
+
+
+    confirmBorrowButton.innerText =
+        "Processing...";
+
+
+    setStatus(
+        "Processing Borrow",
+        "busy"
+    );
+
+
+    socket.emit(
+        "confirm-borrow",
+        currentItem
+    );
+
+}
+
+
+/*
+ * =========================================================
+ * LOGOUT
+ * =========================================================
+ */
+
+function logout() {
+
+    clearCamera();
+
+
+    socket.emit(
+        "logout-user"
+    );
+
+}
+
+
+/*
+ * =========================================================
+ * BACK TO MENU
+ * =========================================================
+ */
+
+function backToMenu() {
+
+    clearCamera();
+
+
+    currentItem =
+        null;
+
+
+    currentMenu =
+        null;
+
+
+    borrowProcessing =
+        false;
+
+
+    confirmBorrowButton.disabled =
+        false;
+
+
+    confirmBorrowButton.innerText =
+        "Confirm Borrow";
+
+
+    if (
+        currentUser
+    ) {
+
+        setStatus(
+            "User Authenticated",
+            "ready"
+        );
+
+
+        showMenu();
+
+    }
+    else {
+
+        setStatus(
+            "System Ready",
+            "ready"
+        );
+
+
+        showLogin();
+
+    }
+
+}
+
+
+/*
+ * =========================================================
+ * HTML ESCAPE
+ * =========================================================
+ */
+
+function escapeHTML(
+    value
+) {
+
+    return String(
+        value || ""
+    )
+        .replace(
+            /&/g,
+            "&amp;"
+        )
+        .replace(
+            /</g,
+            "&lt;"
+        )
+        .replace(
+            />/g,
+            "&gt;"
+        )
+        .replace(
+            /"/g,
+            "&quot;"
+        )
+        .replace(
+            /'/g,
+            "&#039;"
+        );
+
+}
+
+
+/*
+ * =========================================================
+ * SOCKET CONNECTION
+ * =========================================================
+ */
+
+socket.on(
+    "connect",
+    () => {
+
+        setStatus(
+            "System Ready",
+            "ready"
+        );
+
+    }
+);
+
+
+socket.on(
+    "disconnect",
+    () => {
+
+        clearCamera();
+
+
+        setStatus(
+            "Disconnected",
+            "error"
+        );
+
+    }
+);
+
+
+/*
+ * =========================================================
+ * INITIAL
+ * =========================================================
+ */
+
+applySystemConfig({
+    systemName:
+        <%- JSON.stringify(appName) %>,
+
+    deviceName:
+        <%- JSON.stringify(deviceName) %>,
+
+    version:
+        <%- JSON.stringify(version) %>
+});
+
+
+showLogin();
+
+</script>
+
+
+</body>
+
+</html>

@@ -1,0 +1,415 @@
+require("dotenv").config({
+    path: "/opt/LS_Inventory/.env",
+    quiet: true
+});
+
+const fs = require("fs");
+const path = require("path");
+const { google } = require("googleapis");
+
+const ROOT = "/opt/LS_Inventory";
+
+const CLIENT_FILE = path.join(
+    ROOT,
+    "config",
+    "oauth-client.json"
+);
+
+const TOKEN_FILE = path.join(
+    ROOT,
+    "config",
+    "google-token.json"
+);
+
+const CACHE_DIR = path.join(
+    ROOT,
+    "cache"
+);
+
+const SPREADSHEET_ID =
+    process.env.SPREADSHEET_ID;
+
+
+function loadOAuthClient() {
+
+    const clientData = JSON.parse(
+        fs.readFileSync(
+            CLIENT_FILE,
+            "utf8"
+        )
+    );
+
+    const config =
+        clientData.installed ||
+        clientData.web;
+
+    const oauth2Client =
+        new google.auth.OAuth2(
+            config.client_id,
+            config.client_secret,
+            config.redirect_uris?.[0]
+                || "http://localhost"
+        );
+
+    const tokenData = JSON.parse(
+        fs.readFileSync(
+            TOKEN_FILE,
+            "utf8"
+        )
+    );
+
+    oauth2Client.setCredentials(
+        tokenData
+    );
+
+    oauth2Client.on(
+        "tokens",
+        (tokens) => {
+
+            const current = JSON.parse(
+                fs.readFileSync(
+                    TOKEN_FILE,
+                    "utf8"
+                )
+            );
+
+            const updated = {
+                ...current,
+                ...tokens
+            };
+
+            fs.writeFileSync(
+                TOKEN_FILE,
+                JSON.stringify(
+                    updated,
+                    null,
+                    2
+                ),
+                {
+                    mode: 0o600
+                }
+            );
+
+        }
+    );
+
+    return oauth2Client;
+}
+
+
+async function readSheet(
+    sheets,
+    sheetName
+) {
+
+    const response =
+        await sheets.spreadsheets.values.get({
+            spreadsheetId:
+                SPREADSHEET_ID,
+
+            range:
+                `${sheetName}!A:Z`
+        });
+
+    return response.data.values || [];
+}
+
+
+function rowsToObjects(rows) {
+
+    if (
+        !rows ||
+        rows.length < 1
+    ) {
+        return [];
+    }
+
+    const headers = rows[0];
+
+    return rows
+        .slice(1)
+        .filter(
+            row =>
+                row.some(
+                    cell =>
+                        String(
+                            cell || ""
+                        ).trim() !== ""
+                )
+        )
+        .map(row => {
+
+            const obj = {};
+
+            headers.forEach(
+                (header, index) => {
+
+                    const key =
+                        String(
+                            header || ""
+                        )
+                            .trim();
+
+                    if (!key) {
+                        return;
+                    }
+
+                    obj[key] =
+                        row[index] ?? "";
+
+                }
+            );
+
+            return obj;
+
+        });
+}
+
+
+function settingsToObject(rows) {
+
+    const settings = {};
+
+    if (
+        !rows ||
+        rows.length < 2
+    ) {
+        return settings;
+    }
+
+    for (
+        const row
+        of rows.slice(1)
+    ) {
+
+        const key =
+            String(
+                row[0] || ""
+            ).trim();
+
+        const value =
+            row[1] ?? "";
+
+        if (key) {
+            settings[key] = value;
+        }
+
+    }
+
+    return settings;
+}
+
+
+function saveJson(
+    filename,
+    data
+) {
+
+    if (
+        !fs.existsSync(
+            CACHE_DIR
+        )
+    ) {
+
+        fs.mkdirSync(
+            CACHE_DIR,
+            {
+                recursive: true
+            }
+        );
+
+    }
+
+    const filepath =
+        path.join(
+            CACHE_DIR,
+            filename
+        );
+
+    fs.writeFileSync(
+        filepath,
+        JSON.stringify(
+            data,
+            null,
+            2
+        )
+    );
+
+    console.log(
+        `Saved: ${filepath}`
+    );
+
+}
+
+
+async function sync() {
+
+    console.log("");
+    console.log(
+        "======================================"
+    );
+
+    console.log(
+        " LS_Inventory Spreadsheet Sync"
+    );
+
+    console.log(
+        "======================================"
+    );
+
+    console.log("");
+
+    if (!SPREADSHEET_ID) {
+
+        throw new Error(
+            "SPREADSHEET_ID tidak tersedia."
+        );
+
+    }
+
+    if (
+        !fs.existsSync(
+            CLIENT_FILE
+        )
+    ) {
+
+        throw new Error(
+            "oauth-client.json tidak ditemukan."
+        );
+
+    }
+
+    if (
+        !fs.existsSync(
+            TOKEN_FILE
+        )
+    ) {
+
+        throw new Error(
+            "google-token.json tidak ditemukan."
+        );
+
+    }
+
+    const auth =
+        loadOAuthClient();
+
+    const sheets =
+        google.sheets({
+            version: "v4",
+            auth
+        });
+
+    console.log(
+        "Downloading USERS..."
+    );
+
+    const userRows =
+        await readSheet(
+            sheets,
+            "USERS"
+        );
+
+    const users =
+        rowsToObjects(
+            userRows
+        );
+
+    saveJson(
+        "users.json",
+        users
+    );
+
+
+    console.log(
+        "Downloading ITEMS..."
+    );
+
+    const itemRows =
+        await readSheet(
+            sheets,
+            "ITEMS"
+        );
+
+    const items =
+        rowsToObjects(
+            itemRows
+        );
+
+    saveJson(
+        "items.json",
+        items
+    );
+
+
+    console.log(
+        "Downloading SETTINGS..."
+    );
+
+    const settingRows =
+        await readSheet(
+            sheets,
+            "SETTINGS"
+        );
+
+    const settings =
+        settingsToObject(
+            settingRows
+        );
+
+    saveJson(
+        "settings.json",
+        settings
+    );
+
+
+    console.log("");
+    console.log(
+        "======================================"
+    );
+
+    console.log(
+        " SYNC SUCCESS"
+    );
+
+    console.log(
+        "======================================"
+    );
+
+    console.log(
+        `Users    : ${users.length}`
+    );
+
+    console.log(
+        `Items    : ${items.length}`
+    );
+
+    console.log(
+        `Settings : ${
+            Object.keys(
+                settings
+            ).length
+        }`
+    );
+
+    console.log("");
+
+}
+
+
+sync().catch(
+    error => {
+
+        console.error("");
+        console.error(
+            "SYNC FAILED"
+        );
+
+        console.error(
+            error.message
+        );
+
+        process.exit(1);
+
+    }
+);

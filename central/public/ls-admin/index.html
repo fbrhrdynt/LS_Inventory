@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#0b1220">
+    <title>LS Inventory Admin</title>
+    <link rel="stylesheet" href="/ls-admin/admin.css">
+</head>
+<body>
+
+<div id="loginView" class="login-shell">
+    <div class="login-card">
+        <div class="brand-mark">LS</div>
+        <div>
+            <h1>LS Inventory Admin</h1>
+            <p>Central inventory administration</p>
+        </div>
+        <form id="loginForm" class="stack">
+            <label>Username<input id="loginUsername" autocomplete="username" value="admin" required></label>
+            <label>Password<input id="loginPassword" type="password" autocomplete="current-password" required></label>
+            <button class="btn primary" type="submit">Sign In</button>
+            <p id="loginError" class="form-error"></p>
+        </form>
+    </div>
+</div>
+
+<div id="appView" class="app-shell hidden">
+    <aside id="sidebar" class="sidebar">
+        <div class="sidebar-brand">
+            <div class="brand-mark small">LS</div>
+            <div><strong>LS Inventory</strong><span>Central Admin</span></div>
+        </div>
+
+        <nav class="nav">
+            <button class="nav-item active" data-view="dashboard">Dashboard</button>
+            <button class="nav-item" data-view="items">Inventory</button>
+            <button class="nav-item" data-view="users">Users</button>
+            <button class="nav-item" data-view="transactions">Transactions</button>
+            <button class="nav-item" data-view="devices">Devices & Maintenance</button>
+            <button class="nav-item" data-view="settings">Settings</button>
+        </nav>
+
+        <div class="sidebar-footer">
+            <div id="adminIdentity" class="admin-identity"></div>
+            <button id="logoutBtn" class="btn ghost full">Logout</button>
+        </div>
+    </aside>
+
+    <main class="main">
+        <header class="topbar">
+            <button id="menuBtn" class="icon-btn mobile-only">☰</button>
+            <div>
+                <h2 id="pageTitle">Dashboard</h2>
+                <p id="pageSubtitle">LS Inventory central database</p>
+            </div>
+            <div id="connectionBadge" class="status-pill ok">Central Online</div>
+        </header>
+
+        <section id="dashboardView" class="view"></section>
+
+        <section id="itemsView" class="view hidden">
+            <div class="toolbar">
+                <div class="toolbar-left">
+                    <input id="itemSearch" class="search" placeholder="Search item, code, QR...">
+                    <select id="itemTypeFilter"><option value="">All Types</option><option>BORROWABLE</option><option>CONSUMABLE</option></select>
+                    <select id="itemStatusFilter"><option value="">All Status</option><option>AVAILABLE</option><option>BORROWED</option><option>LOW_STOCK</option><option>OUT_OF_STOCK</option><option>DISABLED</option></select>
+                </div>
+                <button id="addItemBtn" class="btn primary">+ Add Item</button>
+            </div>
+            <div class="panel"><div class="table-wrap"><table><thead><tr><th>Code</th><th>Item</th><th>Type</th><th>Stock</th><th>Status</th><th>Location</th><th>Borrowed By</th><th></th></tr></thead><tbody id="itemsBody"></tbody></table></div><div id="itemsPager" class="pager"></div></div>
+        </section>
+
+        <section id="usersView" class="view hidden">
+            <div class="toolbar">
+                <input id="userSearch" class="search" placeholder="Search name, employee ID, card UID...">
+                <button id="addUserBtn" class="btn primary">+ Add User</button>
+            </div>
+            <div class="panel"><div class="table-wrap"><table><thead><tr><th>Name</th><th>Employee ID</th><th>Card UID</th><th>Department</th><th>Role</th><th>Status</th><th></th></tr></thead><tbody id="usersBody"></tbody></table></div><div id="usersPager" class="pager"></div></div>
+        </section>
+
+        <section id="transactionsView" class="view hidden">
+            <div class="toolbar">
+                <div class="toolbar-left">
+                    <input id="trxSearch" class="search" placeholder="Search user, item, transaction...">
+                    <select id="trxActionFilter"><option value="">All Actions</option><option>BORROW</option><option>RETURN</option><option>CONSUME</option></select>
+                </div>
+            </div>
+            <div class="panel"><div class="table-wrap"><table><thead><tr><th>Time</th><th>Action</th><th>Item</th><th>User</th><th>Qty</th><th>Device</th><th>Status</th></tr></thead><tbody id="transactionsBody"></tbody></table></div><div id="transactionsPager" class="pager"></div></div>
+        </section>
+
+        <section id="devicesView" class="view hidden">
+            <div id="devicesGrid" class="device-grid"></div>
+        </section>
+
+        <section id="settingsView" class="view hidden">
+            <div class="settings-grid">
+                <div class="panel form-panel">
+                    <h3>System</h3>
+                    <label>System Name<input id="settingSystemName"></label>
+                    <label>Main Device Name<input id="settingDeviceName"></label>
+                    <label>Version<input id="settingVersion"></label>
+                </div>
+                <div class="panel form-panel">
+                    <h3>Inventory</h3>
+                    <label>Low Stock Threshold<input id="settingLowStock" type="number" min="0"></label>
+                    <label>Timezone<input id="settingTimezone" placeholder="Asia/Jakarta"></label>
+                    <label>Sync Interval (seconds)<input id="settingSyncInterval" type="number" min="30"></label>
+                </div>
+            </div>
+            <button id="saveSettingsBtn" class="btn primary">Save Settings</button>
+        </section>
+    </main>
+</div>
+
+<div id="modal" class="modal hidden">
+    <div class="modal-card">
+        <div class="modal-head"><h3 id="modalTitle">Form</h3><button id="modalClose" class="icon-btn">×</button></div>
+        <form id="modalForm" class="form-grid"></form>
+    </div>
+</div>
+
+<div id="toast" class="toast hidden"></div>
+<script src="/ls-admin/admin.js"></script>
+</body>
+</html>

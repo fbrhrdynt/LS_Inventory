@@ -1,0 +1,1079 @@
+require("dotenv").config({
+    path: "/opt/LS_Inventory/.env",
+    quiet: true
+});
+
+const fs = require("fs");
+const path = require("path");
+const crypto = require("crypto");
+
+const { google } = require("googleapis");
+
+
+const ROOT =
+    "/opt/LS_Inventory";
+
+
+const CLIENT_FILE =
+    path.join(
+        ROOT,
+        "config",
+        "oauth-client.json"
+    );
+
+
+const TOKEN_FILE =
+    path.join(
+        ROOT,
+        "config",
+        "google-token.json"
+    );
+
+
+const ITEMS_CACHE =
+    path.join(
+        ROOT,
+        "cache",
+        "items.json"
+    );
+
+
+const PENDING_DIR =
+    path.join(
+        ROOT,
+        "pending"
+    );
+
+
+const PENDING_FILE =
+    path.join(
+        PENDING_DIR,
+        "transactions.json"
+    );
+
+
+const SPREADSHEET_ID =
+    process.env.SPREADSHEET_ID;
+
+
+const DEVICE_NAME =
+    process.env.DEVICE_NAME
+    || "LS Cabinet 01";
+
+
+/*
+ * =========================================================
+ * HELPERS
+ * =========================================================
+ */
+
+function normalize(value) {
+
+    return String(
+        value || ""
+    )
+        .trim()
+        .toUpperCase();
+
+}
+
+
+function ensureDirectories() {
+
+    if (
+        !fs.existsSync(
+            PENDING_DIR
+        )
+    ) {
+
+        fs.mkdirSync(
+            PENDING_DIR,
+            {
+                recursive: true
+            }
+        );
+
+    }
+
+
+    if (
+        !fs.existsSync(
+            PENDING_FILE
+        )
+    ) {
+
+        fs.writeFileSync(
+            PENDING_FILE,
+            JSON.stringify(
+                [],
+                null,
+                2
+            )
+        );
+
+    }
+
+}
+
+
+function generateTransactionId() {
+
+    const now =
+        new Date();
+
+
+    const timestamp =
+        now
+            .toISOString()
+            .replace(
+                /[-:TZ.]/g,
+                ""
+            )
+            .slice(
+                0,
+                14
+            );
+
+
+    const random =
+        crypto
+            .randomBytes(3)
+            .toString("hex")
+            .toUpperCase();
+
+
+    return (
+        `TRX-${timestamp}-${random}`
+    );
+
+}
+
+
+function loadJSON(
+    filename,
+    fallback = []
+) {
+
+    try {
+
+        if (
+            !fs.existsSync(
+                filename
+            )
+        ) {
+
+            return fallback;
+
+        }
+
+
+        return JSON.parse(
+            fs.readFileSync(
+                filename,
+                "utf8"
+            )
+        );
+
+    }
+    catch (error) {
+
+        console.error(
+            `Failed reading ${filename}:`,
+            error.message
+        );
+
+        return fallback;
+
+    }
+
+}
+
+
+function saveJSON(
+    filename,
+    data
+) {
+
+    fs.writeFileSync(
+        filename,
+        JSON.stringify(
+            data,
+            null,
+            2
+        )
+    );
+
+}
+
+
+/*
+ * =========================================================
+ * GOOGLE AUTH
+ * =========================================================
+ */
+
+function getOAuthClient() {
+
+    const clientData =
+        JSON.parse(
+            fs.readFileSync(
+                CLIENT_FILE,
+                "utf8"
+            )
+        );
+
+
+    const client =
+        clientData.installed
+        || clientData.web;
+
+
+    const oauth2Client =
+        new google.auth.OAuth2(
+            client.client_id,
+            client.client_secret,
+            client.redirect_uris?.[0]
+            || "http://localhost"
+        );
+
+
+    const token =
+        JSON.parse(
+            fs.readFileSync(
+                TOKEN_FILE,
+                "utf8"
+            )
+        );
+
+
+    oauth2Client.setCredentials(
+        token
+    );
+
+
+    /*
+     * Simpan token baru jika Google
+     * melakukan refresh access token.
+     */
+
+    oauth2Client.on(
+        "tokens",
+        tokens => {
+
+            const current =
+                JSON.parse(
+                    fs.readFileSync(
+                        TOKEN_FILE,
+                        "utf8"
+                    )
+                );
+
+
+            const updated = {
+                ...current,
+                ...tokens
+            };
+
+
+            fs.writeFileSync(
+                TOKEN_FILE,
+                JSON.stringify(
+                    updated,
+                    null,
+                    2
+                ),
+                {
+                    mode: 0o600
+                }
+            );
+
+        }
+    );
+
+
+    return oauth2Client;
+
+}
+
+
+function getSheetsClient() {
+
+    return google.sheets({
+        version: "v4",
+        auth: getOAuthClient()
+    });
+
+}
+
+
+/*
+ * =========================================================
+ * GOOGLE SHEET HEADER
+ * =========================================================
+ */
+
+async function getHeaders(
+    sheets,
+    sheetName
+) {
+
+    const response =
+        await sheets
+            .spreadsheets
+            .values
+            .get({
+                spreadsheetId:
+                    SPREADSHEET_ID,
+
+                range:
+                    `${sheetName}!1:1`
+            });
+
+
+    return (
+        response.data.values?.[0]
+        || []
+    );
+
+}
+
+
+/*
+ * =========================================================
+ * APPEND TRANSACTION
+ * =========================================================
+ */
+
+async function appendTransaction(
+    transaction
+) {
+
+    const sheets =
+        getSheetsClient();
+
+
+    const headers =
+        await getHeaders(
+            sheets,
+            "TRANSACTIONS"
+        );
+
+
+    if (
+        headers.length === 0
+    ) {
+
+        throw new Error(
+            "Header TRANSACTIONS tidak ditemukan."
+        );
+
+    }
+
+
+    const dataMap = {
+
+        TRANSACTION_ID:
+            transaction.transactionId,
+
+        TIMESTAMP:
+            transaction.timestamp,
+
+        USER_UUID:
+            transaction.userUUID,
+
+        USER_NAME:
+            transaction.userName,
+
+        CARD_UID:
+            transaction.cardUID,
+
+        ACTION:
+            transaction.action,
+
+        ITEM_UUID:
+            transaction.itemUUID,
+
+        ITEM_CODE:
+            transaction.itemCode,
+
+        ITEM_NAME:
+            transaction.itemName,
+
+        QTY:
+            transaction.qty,
+
+        STATUS:
+            transaction.status,
+
+        DEVICE:
+            transaction.device,
+
+        SYNC_STATUS:
+            "SYNCED"
+
+    };
+
+
+    const row =
+        headers.map(
+            header => {
+
+                return (
+                    dataMap[
+                        normalize(header)
+                    ]
+                    ?? ""
+                );
+
+            }
+        );
+
+
+    await sheets
+        .spreadsheets
+        .values
+        .append({
+
+            spreadsheetId:
+                SPREADSHEET_ID,
+
+            range:
+                "TRANSACTIONS!A:Z",
+
+            valueInputOption:
+                "USER_ENTERED",
+
+            insertDataOption:
+                "INSERT_ROWS",
+
+            requestBody: {
+
+                values: [
+                    row
+                ]
+
+            }
+
+        });
+
+}
+
+
+/*
+ * =========================================================
+ * UPDATE ITEM STATUS GOOGLE SHEET
+ * =========================================================
+ */
+
+async function updateGoogleItemStatus(
+    itemUUID,
+    newStatus
+) {
+
+    const sheets =
+        getSheetsClient();
+
+
+    const response =
+        await sheets
+            .spreadsheets
+            .values
+            .get({
+
+                spreadsheetId:
+                    SPREADSHEET_ID,
+
+                range:
+                    "ITEMS!A:Z"
+
+            });
+
+
+    const rows =
+        response.data.values
+        || [];
+
+
+    if (
+        rows.length < 2
+    ) {
+
+        throw new Error(
+            "Sheet ITEMS kosong."
+        );
+
+    }
+
+
+    const headers =
+        rows[0]
+            .map(
+                header =>
+                    normalize(header)
+            );
+
+
+    const uuidIndex =
+        headers.indexOf(
+            "UUID"
+        );
+
+
+    const statusIndex =
+        headers.indexOf(
+            "STATUS"
+        );
+
+
+    if (
+        uuidIndex === -1
+        ||
+        statusIndex === -1
+    ) {
+
+        throw new Error(
+            "Kolom UUID / STATUS tidak ditemukan di ITEMS."
+        );
+
+    }
+
+
+    let sheetRow =
+        null;
+
+
+    for (
+        let index = 1;
+        index < rows.length;
+        index++
+    ) {
+
+        if (
+            normalize(
+                rows[index][
+                    uuidIndex
+                ]
+            )
+            ===
+            normalize(
+                itemUUID
+            )
+        ) {
+
+            /*
+             * Google Sheets row dimulai 1,
+             * array index dimulai 0.
+             */
+
+            sheetRow =
+                index + 1;
+
+            break;
+
+        }
+
+    }
+
+
+    if (!sheetRow) {
+
+        throw new Error(
+            `Item ${itemUUID} tidak ditemukan di Google Sheet.`
+        );
+
+    }
+
+
+    /*
+     * Convert column index ke A1.
+     */
+
+    const columnLetter =
+        columnToLetter(
+            statusIndex + 1
+        );
+
+
+    await sheets
+        .spreadsheets
+        .values
+        .update({
+
+            spreadsheetId:
+                SPREADSHEET_ID,
+
+            range:
+                `ITEMS!${columnLetter}${sheetRow}`,
+
+            valueInputOption:
+                "USER_ENTERED",
+
+            requestBody: {
+
+                values: [
+                    [
+                        newStatus
+                    ]
+                ]
+
+            }
+
+        });
+
+}
+
+
+function columnToLetter(
+    column
+) {
+
+    let result = "";
+
+
+    while (
+        column > 0
+    ) {
+
+        const remainder =
+            (
+                column - 1
+            )
+            % 26;
+
+
+        result =
+            String.fromCharCode(
+                65 + remainder
+            )
+            + result;
+
+
+        column =
+            Math.floor(
+                (
+                    column - 1
+                )
+                / 26
+            );
+
+    }
+
+
+    return result;
+
+}
+
+
+/*
+ * =========================================================
+ * UPDATE LOCAL ITEM CACHE
+ * =========================================================
+ */
+
+function updateLocalItemStatus(
+    itemUUID,
+    newStatus
+) {
+
+    const items =
+        loadJSON(
+            ITEMS_CACHE,
+            []
+        );
+
+
+    let found = false;
+
+
+    for (
+        const item
+        of items
+    ) {
+
+        if (
+            normalize(
+                item.UUID
+            )
+            ===
+            normalize(
+                itemUUID
+            )
+        ) {
+
+            item.STATUS =
+                newStatus;
+
+
+            found = true;
+
+            break;
+
+        }
+
+    }
+
+
+    if (found) {
+
+        saveJSON(
+            ITEMS_CACHE,
+            items
+        );
+
+    }
+
+
+    return found;
+
+}
+
+
+/*
+ * =========================================================
+ * PENDING TRANSACTION
+ * =========================================================
+ */
+
+function addPending(
+    transaction
+) {
+
+    ensureDirectories();
+
+
+    const pending =
+        loadJSON(
+            PENDING_FILE,
+            []
+        );
+
+
+    pending.push({
+        ...transaction,
+
+        pendingSince:
+            new Date()
+                .toISOString(),
+
+        retryCount:
+            0
+    });
+
+
+    saveJSON(
+        PENDING_FILE,
+        pending
+    );
+
+}
+
+
+/*
+ * =========================================================
+ * BORROW
+ * =========================================================
+ */
+
+async function createBorrow(
+    user,
+    item
+) {
+
+    if (!user) {
+
+        throw new Error(
+            "User tidak tersedia."
+        );
+
+    }
+
+
+    if (!item) {
+
+        throw new Error(
+            "Item tidak tersedia."
+        );
+
+    }
+
+
+    if (
+        normalize(
+            item.STATUS
+        )
+        !==
+        "AVAILABLE"
+    ) {
+
+        throw new Error(
+            `Item tidak dapat dipinjam. Status: ${
+                item.STATUS
+                || "UNKNOWN"
+            }`
+        );
+
+    }
+
+
+    const transaction = {
+
+        transactionId:
+            generateTransactionId(),
+
+        timestamp:
+            new Date()
+                .toISOString(),
+
+        userUUID:
+            user.UUID
+            || "",
+
+        userName:
+            user.NAME
+            || "",
+
+        cardUID:
+            user.CARD_UID
+            || "",
+
+        action:
+            "BORROW",
+
+        itemUUID:
+            item.UUID
+            || "",
+
+        itemCode:
+            item.ITEM_CODE
+            || "",
+
+        itemName:
+            item.ITEM_NAME
+            || "",
+
+        qty:
+            1,
+
+        status:
+            "BORROWED",
+
+        device:
+            DEVICE_NAME
+
+    };
+
+
+    /*
+     * Update cache langsung.
+     *
+     * Ini penting agar item tidak bisa
+     * dipinjam dua kali ketika internet
+     * sedang mati.
+     */
+
+    updateLocalItemStatus(
+        transaction.itemUUID,
+        "BORROWED"
+    );
+
+
+    try {
+
+        /*
+         * Google transaction.
+         */
+
+        await appendTransaction(
+            transaction
+        );
+
+
+        /*
+         * Google item status.
+         */
+
+        await updateGoogleItemStatus(
+            transaction.itemUUID,
+            "BORROWED"
+        );
+
+
+        return {
+
+            success:
+                true,
+
+            synced:
+                true,
+
+            pending:
+                false,
+
+            transaction
+
+        };
+
+    }
+    catch (error) {
+
+        console.error(
+            "Google Borrow failed:",
+            error.message
+        );
+
+
+        /*
+         * Simpan pending.
+         */
+
+        addPending(
+            transaction
+        );
+
+
+        return {
+
+            success:
+                true,
+
+            synced:
+                false,
+
+            pending:
+                true,
+
+            message:
+                error.message,
+
+            transaction
+
+        };
+
+    }
+
+}
+
+
+/*
+ * =========================================================
+ * SYNC PENDING
+ * =========================================================
+ */
+
+async function syncPending() {
+
+    ensureDirectories();
+
+
+    const pending =
+        loadJSON(
+            PENDING_FILE,
+            []
+        );
+
+
+    if (
+        pending.length === 0
+    ) {
+
+        return {
+            total: 0,
+            synced: 0
+        };
+
+    }
+
+
+    const remaining = [];
+
+    let syncedCount = 0;
+
+
+    for (
+        const transaction
+        of pending
+    ) {
+
+        try {
+
+            await appendTransaction(
+                transaction
+            );
+
+
+            await updateGoogleItemStatus(
+                transaction.itemUUID,
+                transaction.status
+            );
+
+
+            syncedCount++;
+
+
+            console.log(
+                `Pending synced: ${
+                    transaction.transactionId
+                }`
+            );
+
+        }
+        catch (error) {
+
+            console.error(
+                `Pending sync failed: ${
+                    transaction.transactionId
+                }`,
+                error.message
+            );
+
+
+            remaining.push({
+                ...transaction,
+
+                retryCount:
+                    (
+                        transaction.retryCount
+                        || 0
+                    )
+                    + 1
+            });
+
+        }
+
+    }
+
+
+    saveJSON(
+        PENDING_FILE,
+        remaining
+    );
+
+
+    return {
+
+        total:
+            pending.length,
+
+        synced:
+            syncedCount,
+
+        remaining:
+            remaining.length
+
+    };
+
+}
+
+
+/*
+ * =========================================================
+ * EXPORTS
+ * =========================================================
+ */
+
+module.exports = {
+
+    createBorrow,
+    syncPending
+
+};

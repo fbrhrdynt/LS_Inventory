@@ -1,69 +1,2779 @@
 <!DOCTYPE html>
 <html lang="en">
-
 <head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-    <meta charset="UTF-8">
+<title><%= appName %></title>
 
-    <meta
-        name="viewport"
-        content="width=device-width, initial-scale=1.0">
+<link rel="stylesheet" href="/css/style.css">
 
-    <title><%= appName %></title>
+<style>
 
-    <link
-        rel="stylesheet"
-        href="/css/style.css">
+.card {
+    position: relative;
+}
 
+.code-button {
+    width: 100%;
+    height: 34px;
+    margin: 5px 0;
+
+    border: 1px solid #50617e;
+    border-radius: 8px;
+
+    background: #182840;
+    color: #fff;
+
+    font-size: 11px;
+    font-weight: 800;
+
+    touch-action: manipulation;
+}
+
+.code-button:active {
+    transform: scale(.98);
+}
+
+#scanScreen .camera-box {
+    height: 205px;
+    margin: 4px 0;
+}
+
+
+/* =========================================================
+   CONSUMABLE
+========================================================= */
+
+.consume-quantity {
+    display: none;
+    margin-top: 7px;
+}
+
+.consume-quantity-label {
+    color: #8ca4c7;
+    font-size: 9px;
+    margin-bottom: 4px;
+}
+
+.qty-control {
+    display: grid;
+    grid-template-columns: 55px 1fr 55px;
+    gap: 7px;
+}
+
+.qty-button {
+    height: 39px;
+
+    border: 1px solid #50617e;
+    border-radius: 8px;
+
+    background: #182840;
+    color: #fff;
+
+    font-size: 22px;
+    font-weight: bold;
+}
+
+.qty-value {
+    height: 39px;
+
+    display: flex;
+    align-items: center;
+    justify-content: center;
+
+    background: #080f1e;
+
+    border: 1px solid #263b59;
+    border-radius: 8px;
+
+    font-size: 19px;
+    font-weight: bold;
+}
+
+.stock-info {
+    margin-top: 4px;
+
+    color: #9ab0cf;
+    font-size: 9px;
+}
+
+
+/* =========================================================
+   CODE NUMPAD
+========================================================= */
+
+.code-modal {
+    position: absolute;
+
+    inset: 0;
+
+    z-index: 9999;
+
+    background: rgba(7,14,27,.98);
+
+    padding: 18px;
+
+    display: flex;
+    flex-direction: column;
+
+    align-items: center;
+    justify-content: center;
+}
+
+.code-modal.hidden {
+    display: none !important;
+}
+
+.code-modal-title {
+    font-size: 18px;
+    font-weight: 800;
+    margin-bottom: 4px;
+}
+
+.code-modal-subtitle {
+    font-size: 9px;
+    color: #91a8cc;
+    margin-bottom: 9px;
+}
+
+.code-display {
+    width: 100%;
+    height: 48px;
+
+    margin-bottom: 9px;
+
+    border: 1px solid #405675;
+    border-radius: 9px;
+
+    background: #07111f;
+
+    display: flex;
+    align-items: center;
+    justify-content: center;
+
+    font-size: 23px;
+    font-weight: 900;
+
+    letter-spacing: 2px;
+}
+
+.code-error {
+    min-height: 16px;
+
+    margin-bottom: 5px;
+
+    color: #ff8d8d;
+
+    font-size: 9px;
+    text-align: center;
+}
+
+.numpad {
+    width: 100%;
+
+    display: grid;
+
+    grid-template-columns: repeat(3,1fr);
+
+    gap: 7px;
+}
+
+.numpad-button {
+    height: 48px;
+
+    border: 1px solid #344965;
+    border-radius: 9px;
+
+    background: #17283f;
+    color: #fff;
+
+    font-size: 19px;
+    font-weight: 800;
+
+    touch-action: manipulation;
+}
+
+.numpad-button:active {
+    transform: scale(.96);
+    background: #25405f;
+}
+
+.numpad-button.action {
+    font-size: 12px;
+}
+
+.code-modal-actions {
+    width: 100%;
+
+    display: grid;
+
+    grid-template-columns: 1fr 1fr;
+
+    gap: 7px;
+
+    margin-top: 9px;
+}
+
+.code-cancel,
+.code-confirm {
+    height: 40px;
+
+    border-radius: 8px;
+
+    font-size: 11px;
+    font-weight: 800;
+
+    touch-action: manipulation;
+}
+
+.code-cancel {
+    background: transparent;
+
+    color: #fff;
+
+    border: 1px solid #50617e;
+}
+
+.code-confirm {
+    border: 0;
+
+    background: #fff;
+
+    color: #0e172a;
+}
+
+#borrowedByRow,
+#borrowedAtRow {
+    display: none;
+}
+
+</style>
 </head>
+
 
 <body>
 
-    <main class="container">
+<main class="container">
 
-        <section class="card">
+<section class="card">
 
-            <div class="logo">
-                LS
+
+<!-- =====================================================
+     HEADER
+====================================================== -->
+
+<header class="header">
+
+    <div class="logo">
+        LS
+    </div>
+
+    <div class="header-text">
+
+        <h1 id="systemName">
+            <%= appName %>
+        </h1>
+
+        <p id="deviceName">
+            <%= deviceName %>
+        </p>
+
+    </div>
+
+</header>
+
+
+<!-- =====================================================
+     LOGIN
+====================================================== -->
+
+<section
+    id="loginScreen"
+    class="screen">
+
+    <div class="nfc-circle">
+        NFC
+    </div>
+
+    <h2>
+        Tap Your Card
+    </h2>
+
+    <p class="subtitle">
+        Tempelkan kartu NFC Anda pada reader
+    </p>
+
+</section>
+
+
+<!-- =====================================================
+     MENU
+====================================================== -->
+
+<section
+    id="menuScreen"
+    class="screen hidden">
+
+    <div class="badge success">
+        USER AUTHENTICATED
+    </div>
+
+    <h2 id="welcome">
+        Welcome
+    </h2>
+
+    <p
+        id="userRole"
+        class="subtitle">
+        -
+    </p>
+
+
+    <div class="menu-grid">
+
+        <button
+            class="menu-button"
+            onclick="selectMenu('borrow')">
+
+            <div class="menu-icon">
+                ↓
             </div>
 
-            <h1>
-                <%= appName %>
-            </h1>
+            <div>
+                Borrow
+            </div>
 
-            <p class="device">
-                <%= deviceName %>
-            </p>
+        </button>
 
-            <div class="divider"></div>
 
-            <div class="tap-area">
+        <button
+            class="menu-button"
+            onclick="selectMenu('return')">
 
-                <div class="nfc-icon">
-                    NFC
-                </div>
+            <div class="menu-icon">
+                ↑
+            </div>
 
-                <h2>
-                    Tap Your Card
-                </h2>
+            <div>
+                Return
+            </div>
 
-                <p>
-                    Please tap your NFC card
-                </p>
+        </button>
+
+
+        <button
+            class="menu-button"
+            onclick="selectMenu('consume')">
+
+            <div class="menu-icon">
+                −
+            </div>
+
+            <div>
+                Consumable
+            </div>
+
+        </button>
+
+    </div>
+
+
+    <button
+        class="secondary-button"
+        onclick="logout()">
+
+        Logout
+
+    </button>
+
+</section>
+
+
+<!-- =====================================================
+     SCANNER
+====================================================== -->
+
+<section
+    id="scanScreen"
+    class="screen hidden">
+
+    <div
+        id="scanBadge"
+        class="badge camera">
+
+        CAMERA ACTIVE
+
+    </div>
+
+
+    <h2 id="scanTitle">
+        Scan Item
+    </h2>
+
+
+    <button
+        class="code-button"
+        onclick="openCodeEntry()">
+
+        CODE · Enter Item Number
+
+    </button>
+
+
+    <div class="camera-box">
+
+        <img
+            id="cameraPreview"
+            class="camera-preview"
+            alt="Camera Preview">
+
+
+        <div class="camera-overlay">
+
+            <div
+                class="scan-corner scan-top-left">
+            </div>
+
+            <div
+                class="scan-corner scan-top-right">
+            </div>
+
+            <div
+                class="scan-corner scan-bottom-left">
+            </div>
+
+            <div
+                class="scan-corner scan-bottom-right">
+            </div>
+
+        </div>
+
+
+        <div
+            id="cameraLoading"
+            class="camera-loading">
+
+            Starting Camera...
+
+        </div>
+
+    </div>
+
+
+    <p
+        id="scanMessage"
+        class="subtitle">
+
+        Scan QR UUID or use 5-digit CODE
+
+    </p>
+
+
+    <button
+        class="secondary-button"
+        onclick="cancelScan()">
+
+        Cancel
+
+    </button>
+
+</section>
+
+
+<!-- =====================================================
+     ITEM
+====================================================== -->
+
+<section
+    id="itemScreen"
+    class="screen hidden">
+
+    <div
+        id="itemBadge"
+        class="badge success">
+
+        ITEM DETECTED
+
+    </div>
+
+
+    <h2 id="itemTitle">
+        Item Detail
+    </h2>
+
+
+    <div class="item-card">
+
+
+        <div class="item-row">
+
+            <span>
+                Item Name
+            </span>
+
+            <strong id="itemName">
+                -
+            </strong>
+
+        </div>
+
+
+        <div class="item-row">
+
+            <span>
+                Item Code
+            </span>
+
+            <strong id="itemCode">
+                -
+            </strong>
+
+        </div>
+
+
+        <div
+            id="itemUUIDRow"
+            class="item-row">
+
+            <span>
+                UUID
+            </span>
+
+            <strong id="itemUUID">
+                -
+            </strong>
+
+        </div>
+
+
+        <div class="item-row">
+
+            <span>
+                Status
+            </span>
+
+            <strong id="itemStatus">
+                -
+            </strong>
+
+        </div>
+
+
+        <div
+            id="itemStockRow"
+            class="item-row"
+            style="display:none">
+
+            <span>
+                Stock
+            </span>
+
+            <strong id="itemStock">
+                -
+            </strong>
+
+        </div>
+
+
+        <div
+            id="itemCategoryRow"
+            class="item-row">
+
+            <span>
+                Category
+            </span>
+
+            <strong id="itemCategory">
+                -
+            </strong>
+
+        </div>
+
+
+        <div
+            id="itemLocationRow"
+            class="item-row">
+
+            <span>
+                Location
+            </span>
+
+            <strong id="itemLocation">
+                -
+            </strong>
+
+        </div>
+
+
+        <div
+            id="borrowedByRow"
+            class="item-row">
+
+            <span>
+                Borrowed By
+            </span>
+
+            <strong id="borrowedBy">
+                -
+            </strong>
+
+        </div>
+
+
+        <div
+            id="borrowedAtRow"
+            class="item-row">
+
+            <span>
+                Borrowed At
+            </span>
+
+            <strong id="borrowedAt">
+                -
+            </strong>
+
+        </div>
+
+    </div>
+
+
+    <!-- =================================================
+         CONSUMABLE QTY
+    ================================================== -->
+
+    <div
+        id="consumeQuantity"
+        class="consume-quantity">
+
+        <div class="consume-quantity-label">
+
+            Quantity
+
+        </div>
+
+
+        <div class="qty-control">
+
+            <button
+                class="qty-button"
+                onclick="decreaseQty()">
+
+                −
+
+            </button>
+
+
+            <div
+                id="qtyValue"
+                class="qty-value">
+
+                1
 
             </div>
 
-            <div class="status">
 
-                <span class="dot"></span>
+            <button
+                class="qty-button"
+                onclick="increaseQty()">
 
-                System Ready
+                +
 
-            </div>
+            </button>
 
-        </section>
+        </div>
 
-    </main>
+
+        <div
+            id="stockInfo"
+            class="stock-info">
+
+            Available Stock: -
+
+        </div>
+
+    </div>
+
+
+    <button
+        id="confirmActionButton"
+        class="primary-button"
+        onclick="confirmOperation()">
+
+        Confirm
+
+    </button>
+
+
+    <button
+        class="secondary-button"
+        onclick="cancelItem()">
+
+        Cancel
+
+    </button>
+
+</section>
+
+
+<!-- =====================================================
+     SUCCESS
+====================================================== -->
+
+<section
+    id="successScreen"
+    class="screen hidden">
+
+    <div class="success-circle">
+        ✓
+    </div>
+
+    <h2 id="successTitle">
+        Successful
+    </h2>
+
+    <p
+        id="successMessage"
+        class="subtitle">
+    </p>
+
+    <button
+        class="primary-button"
+        onclick="backToMenu()">
+
+        Back to Menu
+
+    </button>
+
+    <button
+        class="secondary-button"
+        onclick="logout()">
+
+        Logout
+
+    </button>
+
+</section>
+
+
+<!-- =====================================================
+     ERROR
+====================================================== -->
+
+<section
+    id="errorScreen"
+    class="screen hidden">
+
+    <div class="error-circle">
+        !
+    </div>
+
+    <h2>
+        Error
+    </h2>
+
+    <p
+        id="errorMessage"
+        class="subtitle">
+    </p>
+
+    <button
+        class="secondary-button"
+        onclick="backToMenu()">
+
+        Back
+
+    </button>
+
+</section>
+
+
+<!-- =====================================================
+     FOOTER
+====================================================== -->
+
+<footer class="status-bar">
+
+    <div class="status-left">
+
+        <span
+            id="statusDot"
+            class="status-dot">
+        </span>
+
+        <span id="systemStatus">
+            System Ready
+        </span>
+
+    </div>
+
+    <div
+        id="versionText"
+        class="status-right">
+
+        v<%= version %>
+
+    </div>
+
+</footer>
+
+
+<!-- =====================================================
+     5 DIGIT NUMPAD
+====================================================== -->
+
+<div
+    id="codeModal"
+    class="code-modal hidden">
+
+    <div class="code-modal-title">
+
+        Item Code
+
+    </div>
+
+
+    <div class="code-modal-subtitle">
+
+        Enter 5 digit number
+
+    </div>
+
+
+    <div
+        id="codeDisplay"
+        class="code-display">
+
+        ITEM_-----
+
+    </div>
+
+
+    <div
+        id="codeError"
+        class="code-error">
+    </div>
+
+
+    <div class="numpad">
+
+        <button
+            class="numpad-button"
+            onclick="pressCodeDigit('1')">
+            1
+        </button>
+
+        <button
+            class="numpad-button"
+            onclick="pressCodeDigit('2')">
+            2
+        </button>
+
+        <button
+            class="numpad-button"
+            onclick="pressCodeDigit('3')">
+            3
+        </button>
+
+
+        <button
+            class="numpad-button"
+            onclick="pressCodeDigit('4')">
+            4
+        </button>
+
+        <button
+            class="numpad-button"
+            onclick="pressCodeDigit('5')">
+            5
+        </button>
+
+        <button
+            class="numpad-button"
+            onclick="pressCodeDigit('6')">
+            6
+        </button>
+
+
+        <button
+            class="numpad-button"
+            onclick="pressCodeDigit('7')">
+            7
+        </button>
+
+        <button
+            class="numpad-button"
+            onclick="pressCodeDigit('8')">
+            8
+        </button>
+
+        <button
+            class="numpad-button"
+            onclick="pressCodeDigit('9')">
+            9
+        </button>
+
+
+        <button
+            class="numpad-button action"
+            onclick="clearCodeDigits()">
+
+            CLEAR
+
+        </button>
+
+
+        <button
+            class="numpad-button"
+            onclick="pressCodeDigit('0')">
+
+            0
+
+        </button>
+
+
+        <button
+            class="numpad-button action"
+            onclick="backspaceCodeDigit()">
+
+            ←
+
+        </button>
+
+    </div>
+
+
+    <div class="code-modal-actions">
+
+        <button
+            class="code-cancel"
+            onclick="cancelCodeEntry()">
+
+            Cancel
+
+        </button>
+
+        <button
+            class="code-confirm"
+            onclick="confirmCodeEntry()">
+
+            Confirm
+
+        </button>
+
+    </div>
+
+</div>
+
+
+</section>
+
+</main>
+
+
+<script src="/socket.io/socket.io.js"></script>
+
+
+<script>
+
+const socket =
+    io();
+
+
+/* =========================================================
+   ELEMENTS
+========================================================= */
+
+const loginScreen =
+    document.getElementById(
+        "loginScreen"
+    );
+
+const menuScreen =
+    document.getElementById(
+        "menuScreen"
+    );
+
+const scanScreen =
+    document.getElementById(
+        "scanScreen"
+    );
+
+const itemScreen =
+    document.getElementById(
+        "itemScreen"
+    );
+
+const successScreen =
+    document.getElementById(
+        "successScreen"
+    );
+
+const errorScreen =
+    document.getElementById(
+        "errorScreen"
+    );
+
+
+const systemName =
+    document.getElementById(
+        "systemName"
+    );
+
+const deviceName =
+    document.getElementById(
+        "deviceName"
+    );
+
+const versionText =
+    document.getElementById(
+        "versionText"
+    );
+
+
+const welcome =
+    document.getElementById(
+        "welcome"
+    );
+
+const userRole =
+    document.getElementById(
+        "userRole"
+    );
+
+
+const scanBadge =
+    document.getElementById(
+        "scanBadge"
+    );
+
+const scanTitle =
+    document.getElementById(
+        "scanTitle"
+    );
+
+const cameraPreview =
+    document.getElementById(
+        "cameraPreview"
+    );
+
+const cameraLoading =
+    document.getElementById(
+        "cameraLoading"
+    );
+
+const scanMessage =
+    document.getElementById(
+        "scanMessage"
+    );
+
+
+const itemTitle =
+    document.getElementById(
+        "itemTitle"
+    );
+
+const itemName =
+    document.getElementById(
+        "itemName"
+    );
+
+const itemCode =
+    document.getElementById(
+        "itemCode"
+    );
+
+const itemUUID =
+    document.getElementById(
+        "itemUUID"
+    );
+
+const itemStatus =
+    document.getElementById(
+        "itemStatus"
+    );
+
+const itemStock =
+    document.getElementById(
+        "itemStock"
+    );
+
+const itemCategory =
+    document.getElementById(
+        "itemCategory"
+    );
+
+const itemLocation =
+    document.getElementById(
+        "itemLocation"
+    );
+
+
+const itemUUIDRow =
+    document.getElementById(
+        "itemUUIDRow"
+    );
+
+const itemStockRow =
+    document.getElementById(
+        "itemStockRow"
+    );
+
+const itemCategoryRow =
+    document.getElementById(
+        "itemCategoryRow"
+    );
+
+const itemLocationRow =
+    document.getElementById(
+        "itemLocationRow"
+    );
+
+
+const borrowedByRow =
+    document.getElementById(
+        "borrowedByRow"
+    );
+
+const borrowedAtRow =
+    document.getElementById(
+        "borrowedAtRow"
+    );
+
+const borrowedBy =
+    document.getElementById(
+        "borrowedBy"
+    );
+
+const borrowedAt =
+    document.getElementById(
+        "borrowedAt"
+    );
+
+
+const consumeQuantity =
+    document.getElementById(
+        "consumeQuantity"
+    );
+
+const qtyValue =
+    document.getElementById(
+        "qtyValue"
+    );
+
+const stockInfo =
+    document.getElementById(
+        "stockInfo"
+    );
+
+
+const confirmActionButton =
+    document.getElementById(
+        "confirmActionButton"
+    );
+
+
+const successTitle =
+    document.getElementById(
+        "successTitle"
+    );
+
+const successMessage =
+    document.getElementById(
+        "successMessage"
+    );
+
+const errorMessage =
+    document.getElementById(
+        "errorMessage"
+    );
+
+
+const statusDot =
+    document.getElementById(
+        "statusDot"
+    );
+
+const systemStatus =
+    document.getElementById(
+        "systemStatus"
+    );
+
+
+const codeModal =
+    document.getElementById(
+        "codeModal"
+    );
+
+const codeDisplay =
+    document.getElementById(
+        "codeDisplay"
+    );
+
+const codeError =
+    document.getElementById(
+        "codeError"
+    );
+
+
+/* =========================================================
+   STATE
+========================================================= */
+
+let currentUser =
+    null;
+
+let currentItem =
+    null;
+
+let currentMenu =
+    null;
+
+let transactionProcessing =
+    false;
+
+let consumeQty =
+    1;
+
+let availableStock =
+    0;
+
+let manualCodeDigits =
+    "";
+
+
+/* =========================================================
+   SCREENS
+========================================================= */
+
+function hideScreens() {
+
+    [
+        loginScreen,
+        menuScreen,
+        scanScreen,
+        itemScreen,
+        successScreen,
+        errorScreen
+    ]
+        .forEach(
+            screen => {
+
+                screen.classList.add(
+                    "hidden"
+                );
+            }
+        );
+}
+
+
+function showLogin() {
+
+    hideScreens();
+
+    loginScreen.classList.remove(
+        "hidden"
+    );
+}
+
+
+function showMenu() {
+
+    hideScreens();
+
+    menuScreen.classList.remove(
+        "hidden"
+    );
+}
+
+
+function showScan() {
+
+    hideScreens();
+
+    scanScreen.classList.remove(
+        "hidden"
+    );
+}
+
+
+function showItem() {
+
+    hideScreens();
+
+    itemScreen.classList.remove(
+        "hidden"
+    );
+}
+
+
+function showSuccess() {
+
+    hideScreens();
+
+    successScreen.classList.remove(
+        "hidden"
+    );
+}
+
+
+function showError(
+    message
+) {
+
+    hideScreens();
+
+    errorMessage.innerText =
+        message
+        ||
+        "Unknown error";
+
+    errorScreen.classList.remove(
+        "hidden"
+    );
+
+    setStatus(
+        "Error",
+        "error"
+    );
+}
+
+
+/* =========================================================
+   STATUS
+========================================================= */
+
+function setStatus(
+    text,
+    state
+) {
+
+    systemStatus.innerText =
+        text;
+
+    statusDot.className =
+        "status-dot";
+
+    if (
+        state
+    ) {
+
+        statusDot.classList.add(
+            state
+        );
+    }
+}
+
+
+/* =========================================================
+   CAMERA
+========================================================= */
+
+function clearCamera() {
+
+    cameraPreview.onload =
+        null;
+
+    cameraPreview.onerror =
+        null;
+
+    cameraPreview.src =
+        "";
+}
+
+
+function openCameraStream() {
+
+    cameraLoading.style.display =
+        "flex";
+
+    cameraLoading.innerText =
+        "Loading Camera...";
+
+
+    cameraPreview.onload =
+        () => {
+
+            cameraLoading.style.display =
+                "none";
+        };
+
+
+    cameraPreview.onerror =
+        () => {
+
+            cameraLoading.innerText =
+                "Camera Error";
+
+            setStatus(
+                "Camera Error",
+                "error"
+            );
+        };
+
+
+    cameraPreview.src =
+        "/camera/stream?t="
+        +
+        Date.now();
+}
+
+
+/* =========================================================
+   OPERATION LABEL
+========================================================= */
+
+function operationLabel(
+    operation
+) {
+
+    if (
+        operation ===
+        "borrow"
+    ) {
+
+        return "Borrow";
+    }
+
+
+    if (
+        operation ===
+        "return"
+    ) {
+
+        return "Return";
+    }
+
+
+    if (
+        operation ===
+        "consume"
+    ) {
+
+        return "Consumable";
+    }
+
+
+    return "Transaction";
+}
+
+
+/* =========================================================
+   SYSTEM CONFIG
+========================================================= */
+
+socket.on(
+    "system-config",
+    config => {
+
+        if (
+            config.systemName
+        ) {
+
+            systemName.innerText =
+                config.systemName;
+
+            document.title =
+                config.systemName;
+        }
+
+
+        if (
+            config.deviceName
+        ) {
+
+            deviceName.innerText =
+                config.deviceName;
+        }
+
+
+        if (
+            config.version
+        ) {
+
+            versionText.innerText =
+                "v"
+                +
+                config.version;
+        }
+    }
+);
+
+
+/* =========================================================
+   NFC
+========================================================= */
+
+socket.on(
+    "nfc-user",
+    user => {
+
+        currentUser =
+            user;
+
+        currentItem =
+            null;
+
+        currentMenu =
+            null;
+
+
+        welcome.innerText =
+            "Welcome, "
+            +
+            (
+                user.NAME
+                ||
+                "User"
+            );
+
+
+        userRole.innerText =
+            user.ROLE
+            ||
+            "USER";
+
+
+        setStatus(
+            "User Authenticated",
+            "ready"
+        );
+
+
+        showMenu();
+    }
+);
+
+
+socket.on(
+    "user-logout",
+    () => {
+
+        clearCamera();
+
+        closeCodeModal();
+
+
+        currentUser =
+            null;
+
+        currentItem =
+            null;
+
+        currentMenu =
+            null;
+
+
+        setStatus(
+            "System Ready",
+            "ready"
+        );
+
+
+        showLogin();
+    }
+);
+
+
+/* =========================================================
+   SCAN START
+========================================================= */
+
+socket.on(
+    "operation-scan-start",
+    data => {
+
+        currentMenu =
+            data.operation;
+
+        currentItem =
+            null;
+
+        consumeQty =
+            1;
+
+        clearCamera();
+
+
+        if (
+            currentMenu ===
+            "return"
+        ) {
+
+            scanBadge.innerText =
+                "RETURN SCAN";
+
+            scanTitle.innerText =
+                "Scan Return Item";
+        }
+
+        else if (
+            currentMenu ===
+            "consume"
+        ) {
+
+            scanBadge.innerText =
+                "CONSUMABLE SCAN";
+
+            scanTitle.innerText =
+                "Scan Consumable";
+        }
+
+        else {
+
+            scanBadge.innerText =
+                "BORROW SCAN";
+
+            scanTitle.innerText =
+                "Scan Borrow Item";
+        }
+
+
+        scanMessage.innerText =
+            "Scan QR UUID or use 5-digit CODE";
+
+
+        setStatus(
+            "Starting Camera",
+            "busy"
+        );
+
+
+        showScan();
+    }
+);
+
+
+socket.on(
+    "camera-ready",
+    () => {
+
+        scanMessage.innerText =
+            "Scan QR UUID or use 5-digit CODE";
+
+
+        setStatus(
+            "Scanning QR",
+            "busy"
+        );
+
+
+        setTimeout(
+            openCameraStream,
+            250
+        );
+    }
+);
+
+
+/* =========================================================
+   5 DIGIT CODE
+========================================================= */
+
+function updateCodeDisplay() {
+
+    const remaining =
+        5
+        -
+        manualCodeDigits.length;
+
+
+    codeDisplay.innerText =
+        "ITEM_"
+        +
+        manualCodeDigits
+        +
+        "-".repeat(
+            Math.max(
+                0,
+                remaining
+            )
+        );
+}
+
+
+function openCodeEntry() {
+
+    manualCodeDigits =
+        "";
+
+    codeError.innerText =
+        "";
+
+    updateCodeDisplay();
+
+    clearCamera();
+
+    codeModal.classList.remove(
+        "hidden"
+    );
+
+    socket.emit(
+        "manual-code-open"
+    );
+}
+
+
+function closeCodeModal() {
+
+    codeModal.classList.add(
+        "hidden"
+    );
+
+    codeError.innerText =
+        "";
+
+    manualCodeDigits =
+        "";
+}
+
+
+function pressCodeDigit(
+    digit
+) {
+
+    if (
+        manualCodeDigits.length
+        >=
+        5
+    ) {
+
+        return;
+    }
+
+
+    manualCodeDigits +=
+        digit;
+
+
+    codeError.innerText =
+        "";
+
+
+    updateCodeDisplay();
+}
+
+
+function backspaceCodeDigit() {
+
+    manualCodeDigits =
+        manualCodeDigits.slice(
+            0,
+            -1
+        );
+
+    updateCodeDisplay();
+}
+
+
+function clearCodeDigits() {
+
+    manualCodeDigits =
+        "";
+
+    codeError.innerText =
+        "";
+
+    updateCodeDisplay();
+}
+
+
+function confirmCodeEntry() {
+
+    if (
+        manualCodeDigits.length
+        !==
+        5
+    ) {
+
+        codeError.innerText =
+            "Enter exactly 5 digits";
+
+        return;
+    }
+
+
+    codeError.innerText =
+        "Searching...";
+
+
+    socket.emit(
+        "manual-item-code",
+        {
+
+            digits:
+                manualCodeDigits
+
+        }
+    );
+}
+
+
+function cancelCodeEntry() {
+
+    closeCodeModal();
+
+
+    cameraLoading.style.display =
+        "flex";
+
+
+    cameraLoading.innerText =
+        "Starting Camera...";
+
+
+    socket.emit(
+        "manual-code-cancel"
+    );
+}
+
+
+socket.on(
+    "manual-code-error",
+    data => {
+
+        codeError.innerText =
+            data.message
+            ||
+            "Item not found";
+    }
+);
+
+
+/* =========================================================
+   ITEM FOUND
+========================================================= */
+
+socket.on(
+    "qr-item",
+    data => {
+
+        closeCodeModal();
+
+
+        const item =
+            data.item
+            ||
+            data;
+
+
+        currentMenu =
+            data.operation
+            ||
+            currentMenu;
+
+
+        currentItem =
+            item;
+
+
+        clearCamera();
+
+
+        itemName.innerText =
+            item.ITEM_NAME
+            ||
+            "-";
+
+
+        itemCode.innerText =
+            item.ITEM_CODE
+            ||
+            "-";
+
+
+        itemUUID.innerText =
+            item.UUID
+            ||
+            "-";
+
+
+        itemStatus.innerText =
+            item.STATUS
+            ||
+            "-";
+
+
+        itemStock.innerText =
+            item.STOCK
+            ??
+            "-";
+
+
+        itemCategory.innerText =
+            item.CATEGORY
+            ||
+            "-";
+
+
+        itemLocation.innerText =
+            item.LOCATION
+            ||
+            "-";
+
+
+        borrowedBy.innerText =
+            item.BORROWED_BY_NAME
+            ||
+            "-";
+
+
+        borrowedAt.innerText =
+            item.BORROWED_AT
+            ||
+            "-";
+
+
+        itemUUIDRow.style.display =
+            "flex";
+
+
+        itemCategoryRow.style.display =
+            "flex";
+
+
+        itemLocationRow.style.display =
+            "flex";
+
+
+        itemStockRow.style.display =
+            "none";
+
+
+        borrowedByRow.style.display =
+            "none";
+
+
+        borrowedAtRow.style.display =
+            "none";
+
+
+        consumeQuantity.style.display =
+            "none";
+
+
+        /* CONSUMABLE */
+
+        if (
+            currentMenu ===
+            "consume"
+        ) {
+
+            itemUUIDRow.style.display =
+                "none";
+
+
+            itemCategoryRow.style.display =
+                "none";
+
+
+            itemLocationRow.style.display =
+                "none";
+
+
+            itemStockRow.style.display =
+                "flex";
+
+
+            consumeQuantity.style.display =
+                "block";
+
+
+            availableStock =
+                Number(
+                    item.STOCK
+                )
+                ||
+                0;
+
+
+            consumeQty =
+                1;
+
+
+            updateQtyDisplay();
+
+
+            itemTitle.innerText =
+                "Consumable Detail";
+
+
+            confirmActionButton.innerText =
+                "Confirm Consume";
+        }
+
+
+        /* RETURN */
+
+        else if (
+            currentMenu ===
+            "return"
+        ) {
+
+            itemUUIDRow.style.display =
+                "none";
+
+
+            itemCategoryRow.style.display =
+                "none";
+
+
+            itemLocationRow.style.display =
+                "none";
+
+
+            borrowedByRow.style.display =
+                "flex";
+
+
+            borrowedAtRow.style.display =
+                "flex";
+
+
+            itemTitle.innerText =
+                "Return Item Detail";
+
+
+            confirmActionButton.innerText =
+                "Confirm Return";
+        }
+
+
+        /* BORROW */
+
+        else {
+
+            itemTitle.innerText =
+                "Borrow Item Detail";
+
+
+            confirmActionButton.innerText =
+                "Confirm Borrow";
+        }
+
+
+        transactionProcessing =
+            false;
+
+
+        confirmActionButton.disabled =
+            false;
+
+
+        setStatus(
+            data.source ===
+            "CODE"
+                ?
+                "Item Found by Code"
+                :
+                "Item Detected",
+
+            "ready"
+        );
+
+
+        showItem();
+    }
+);
+
+
+/* =========================================================
+   QR ERROR
+========================================================= */
+
+socket.on(
+    "qr-error",
+    data => {
+
+        scanMessage.innerText =
+            data.message
+            ||
+            "QR Error";
+
+
+        setStatus(
+            "QR Error",
+            "error"
+        );
+    }
+);
+
+
+/* =========================================================
+   QTY
+========================================================= */
+
+function updateQtyDisplay() {
+
+    qtyValue.innerText =
+        consumeQty;
+
+
+    stockInfo.innerText =
+        "Available Stock: "
+        +
+        availableStock;
+}
+
+
+function increaseQty() {
+
+    if (
+        consumeQty
+        <
+        availableStock
+    ) {
+
+        consumeQty++;
+
+
+        updateQtyDisplay();
+    }
+}
+
+
+function decreaseQty() {
+
+    if (
+        consumeQty
+        >
+        1
+    ) {
+
+        consumeQty--;
+
+
+        updateQtyDisplay();
+    }
+}
+
+
+/* =========================================================
+   CONFIRM
+========================================================= */
+
+function confirmOperation() {
+
+    if (
+        transactionProcessing
+        ||
+        !currentItem
+    ) {
+
+        return;
+    }
+
+
+    transactionProcessing =
+        true;
+
+
+    confirmActionButton.disabled =
+        true;
+
+
+    confirmActionButton.innerText =
+        "Processing...";
+
+
+    if (
+        currentMenu ===
+        "borrow"
+    ) {
+
+        socket.emit(
+            "confirm-borrow",
+            currentItem
+        );
+    }
+
+
+    else if (
+        currentMenu ===
+        "return"
+    ) {
+
+        socket.emit(
+            "confirm-return",
+            currentItem
+        );
+    }
+
+
+    else if (
+        currentMenu ===
+        "consume"
+    ) {
+
+        socket.emit(
+            "confirm-consume",
+            {
+
+                item:
+                    currentItem,
+
+                qty:
+                    consumeQty
+
+            }
+        );
+    }
+}
+
+
+/* =========================================================
+   NUMBER HELPER
+========================================================= */
+
+function getFirstNumber(
+    ...values
+) {
+
+    for (
+        const value
+        of values
+    ) {
+
+        if (
+            value === null
+            ||
+            value === undefined
+            ||
+            value === ""
+        ) {
+
+            continue;
+        }
+
+
+        const number =
+            Number(
+                value
+            );
+
+
+        if (
+            Number.isFinite(
+                number
+            )
+        ) {
+
+            return number;
+        }
+    }
+
+
+    return null;
+}
+
+
+/* =========================================================
+   SUCCESS
+========================================================= */
+
+socket.on(
+    "operation-success",
+    data => {
+
+        transactionProcessing =
+            false;
+
+
+        const label =
+            operationLabel(
+                data.operation
+            );
+
+
+        const transaction =
+            data.transaction
+            ||
+            {};
+
+
+        successTitle.innerText =
+            label
+            +
+            " Successful";
+
+
+        let extra =
+            "";
+
+
+        /* =================================================
+           CONSUMABLE
+        ================================================= */
+
+        if (
+            data.operation ===
+            "consume"
+        ) {
+
+            const consumed =
+                getFirstNumber(
+
+                    data.consumedQty,
+
+                    data.consumed_qty,
+
+                    data.qty,
+
+                    transaction.consumedQty,
+
+                    transaction.consumed_qty,
+
+                    transaction.qty,
+
+                    consumeQty
+
+                );
+
+
+            let remaining =
+                getFirstNumber(
+
+                    data.remainingStock,
+
+                    data.remaining_stock,
+
+                    data.stockAfter,
+
+                    data.stock_after,
+
+                    data.newStock,
+
+                    data.new_stock,
+
+                    data.item?.stock,
+
+                    data.item?.STOCK,
+
+                    transaction.remainingStock,
+
+                    transaction.remaining_stock,
+
+                    transaction.stockAfter,
+
+                    transaction.stock_after,
+
+                    transaction.newStock,
+
+                    transaction.new_stock
+
+                );
+
+
+            /*
+             * Kalau backend tidak mengirim remaining,
+             * hitung dari stock sebelum consume.
+             */
+
+            if (
+                remaining === null
+            ) {
+
+                const stockBefore =
+                    getFirstNumber(
+
+                        currentItem?.STOCK,
+
+                        availableStock
+
+                    );
+
+
+                if (
+                    stockBefore !== null
+                    &&
+                    consumed !== null
+                ) {
+
+                    remaining =
+                        Math.max(
+                            0,
+                            stockBefore
+                            -
+                            consumed
+                        );
+                }
+            }
+
+
+            const qtyText =
+                consumed !== null
+                    ?
+                    consumed
+                    :
+                    "-";
+
+
+            const remainingText =
+                remaining !== null
+                    ?
+                    remaining
+                    :
+                    "-";
+
+
+            extra =
+                "<br>"
+                +
+                "Qty: <strong>"
+                +
+                escapeHTML(
+                    qtyText
+                )
+                +
+                "</strong>"
+                +
+                "<br>"
+                +
+                "Remaining: <strong>"
+                +
+                escapeHTML(
+                    remainingText
+                )
+                +
+                "</strong>";
+        }
+
+
+        successMessage.innerHTML =
+
+            "<strong>"
+            +
+            escapeHTML(
+
+                transaction.itemName
+
+                ||
+
+                currentItem?.ITEM_NAME
+
+                ||
+
+                "-"
+
+            )
+            +
+            "</strong>"
+
+            +
+
+            extra
+
+            +
+
+            "<br><br>"
+
+            +
+
+            escapeHTML(
+
+                transaction.transactionId
+
+                ||
+
+                transaction.transaction_uuid
+
+                ||
+
+                transaction.id
+
+                ||
+
+                "-"
+
+            )
+
+            +
+
+            "<br>"
+
+            +
+
+            (
+                data.pending
+
+                    ?
+
+                    "<strong>PENDING SYNC</strong>"
+
+                    :
+
+                    "<strong>SYNCED</strong>"
+            );
+
+
+        setStatus(
+
+            data.pending
+
+                ?
+
+                "Pending Sync"
+
+                :
+
+                label
+                +
+                " Success",
+
+            data.pending
+
+                ?
+
+                "busy"
+
+                :
+
+                "ready"
+
+        );
+
+
+        currentItem =
+            null;
+
+
+        currentMenu =
+            null;
+
+
+        showSuccess();
+    }
+);
+
+
+/* =========================================================
+   ERROR
+========================================================= */
+
+socket.on(
+    "system-error",
+    data => {
+
+        transactionProcessing =
+            false;
+
+
+        confirmActionButton.disabled =
+            false;
+
+
+        closeCodeModal();
+
+
+        showError(
+            data.message
+            ||
+            "System error"
+        );
+    }
+);
+
+
+/* =========================================================
+   MENU / BACK / CANCEL
+========================================================= */
+
+function selectMenu(
+    menu
+) {
+
+    currentMenu =
+        menu;
+
+
+    socket.emit(
+        "select-menu",
+        menu
+    );
+}
+
+
+function cancelScan() {
+
+    clearCamera();
+
+
+    closeCodeModal();
+
+
+    socket.emit(
+        "cancel-scan"
+    );
+
+
+    currentItem =
+        null;
+
+
+    currentMenu =
+        null;
+
+
+    setStatus(
+        "User Authenticated",
+        "ready"
+    );
+
+
+    showMenu();
+}
+
+
+function cancelItem() {
+
+    socket.emit(
+        "cancel-scan"
+    );
+
+
+    currentItem =
+        null;
+
+
+    currentMenu =
+        null;
+
+
+    transactionProcessing =
+        false;
+
+
+    setStatus(
+        "User Authenticated",
+        "ready"
+    );
+
+
+    showMenu();
+}
+
+
+function backToMenu() {
+
+    currentItem =
+        null;
+
+
+    currentMenu =
+        null;
+
+
+    transactionProcessing =
+        false;
+
+
+    if (
+        currentUser
+    ) {
+
+        setStatus(
+            "User Authenticated",
+            "ready"
+        );
+
+
+        showMenu();
+    }
+
+    else {
+
+        showLogin();
+    }
+}
+
+
+function logout() {
+
+    clearCamera();
+
+
+    closeCodeModal();
+
+
+    socket.emit(
+        "logout-user"
+    );
+}
+
+
+/* =========================================================
+   HTML ESCAPE
+========================================================= */
+
+function escapeHTML(
+    value
+) {
+
+    return String(
+        value
+        ??
+        ""
+    )
+
+        .replace(
+            /&/g,
+            "&amp;"
+        )
+
+        .replace(
+            /</g,
+            "&lt;"
+        )
+
+        .replace(
+            />/g,
+            "&gt;"
+        )
+
+        .replace(
+            /"/g,
+            "&quot;"
+        )
+
+        .replace(
+            /'/g,
+            "&#039;"
+        );
+}
+
+
+/* =========================================================
+   CONNECTION
+========================================================= */
+
+socket.on(
+    "connect",
+    () => {
+
+        setStatus(
+            "System Ready",
+            "ready"
+        );
+    }
+);
+
+
+socket.on(
+    "disconnect",
+    () => {
+
+        setStatus(
+            "Disconnected",
+            "error"
+        );
+    }
+);
+
+
+showLogin();
+
+</script>
+
 
 </body>
 

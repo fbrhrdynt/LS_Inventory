@@ -1,6 +1,9 @@
 .env
 node_modules/
+
+config/oauth-client.json
 config/google-service.json
+config/google-token.json
 
 cache/
 pending/
