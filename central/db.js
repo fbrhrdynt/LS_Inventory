@@ -54,6 +54,20 @@ function verifyPassword(password, salt, expectedHash) {
     return expected.length === actual.length && crypto.timingSafeEqual(expected, actual);
 }
 
+function tableColumns(tableName) {
+    return new Set(
+        db.prepare(`PRAGMA table_info(${tableName})`)
+            .all()
+            .map(row => String(row.name))
+    );
+}
+
+function ensureColumn(tableName, columnName, definition) {
+    const columns = tableColumns(tableName);
+    if (columns.has(columnName)) return;
+    db.exec(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${definition}`);
+}
+
 function initCentralDatabase() {
     db.exec(`
         CREATE TABLE IF NOT EXISTS users (
@@ -156,6 +170,8 @@ function initCentralDatabase() {
             device_id TEXT PRIMARY KEY,
             name TEXT NOT NULL,
             location TEXT,
+            site TEXT,
+            description TEXT,
             api_key_hash TEXT NOT NULL,
             active INTEGER NOT NULL DEFAULT 1,
             app_version TEXT,
@@ -169,10 +185,24 @@ function initCentralDatabase() {
             pending_count INTEGER NOT NULL DEFAULT 0,
             last_sync_at TEXT,
             last_seen_at TEXT,
+            paired_at TEXT,
+            deleted_at TEXT,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_devices_last_seen ON devices(last_seen_at DESC);
+        CREATE TABLE IF NOT EXISTS device_pairings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            device_id TEXT NOT NULL,
+            code_hash TEXT UNIQUE NOT NULL,
+            expires_at TEXT NOT NULL,
+            consumed_at TEXT,
+            created_at TEXT NOT NULL,
+            created_by TEXT,
+            FOREIGN KEY(device_id) REFERENCES devices(device_id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_device_pairings_device
+        ON device_pairings(device_id, consumed_at, expires_at);
 
         CREATE TABLE IF NOT EXISTS sync_changes (
             change_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -217,6 +247,23 @@ function initCentralDatabase() {
         );
         CREATE INDEX IF NOT EXISTS idx_admin_sessions_expiry ON admin_sessions(expires_at);
     `);
+
+    ensureColumn("devices", "site", "TEXT");
+    ensureColumn("devices", "description", "TEXT");
+    ensureColumn("devices", "paired_at", "TEXT");
+    ensureColumn("devices", "deleted_at", "TEXT");
+    db.exec("CREATE INDEX IF NOT EXISTS idx_devices_active ON devices(active, deleted_at)");
+
+    /*
+     * Existing authenticated cabinets predate paired_at.
+     * If they have already sent a heartbeat, treat them as paired.
+     */
+    db.prepare(`
+        UPDATE devices
+        SET paired_at=COALESCE(paired_at, created_at)
+        WHERE paired_at IS NULL
+          AND last_seen_at IS NOT NULL
+    `).run();
 
     if (!db.prepare("SELECT 1 FROM settings WHERE key='LOW_STOCK_THRESHOLD'").get()) {
         setSetting("LOW_STOCK_THRESHOLD", "5", "SYSTEM");
@@ -414,19 +461,329 @@ function createAdmin(username, password, displayName = "Administrator") {
 function createOrRotateDevice(deviceId, name, location, plainKey) {
     const ts = nowIso();
     const exists = db.prepare("SELECT device_id, created_at FROM devices WHERE device_id=?").get(deviceId);
+
     db.prepare(`
-        INSERT INTO devices(device_id, name, location, api_key_hash, active, created_at, updated_at)
-        VALUES (?, ?, ?, ?, 1, ?, ?)
+        INSERT INTO devices(
+            device_id, name, location, api_key_hash, active,
+            paired_at, deleted_at, created_at, updated_at
+        )
+        VALUES (?, ?, ?, ?, 1, ?, NULL, ?, ?)
         ON CONFLICT(device_id) DO UPDATE SET
             name=excluded.name,
             location=excluded.location,
             api_key_hash=excluded.api_key_hash,
             active=1,
+            paired_at=excluded.paired_at,
+            deleted_at=NULL,
             updated_at=excluded.updated_at
-    `).run(deviceId, name, location ?? null, hashSecret(plainKey), exists?.created_at ?? ts, ts);
+    `).run(
+        deviceId,
+        name,
+        location ?? null,
+        hashSecret(plainKey),
+        ts,
+        exists?.created_at ?? ts,
+        ts
+    );
+
     audit("SYSTEM", "SETUP", exists ? "DEVICE_KEY_ROTATE" : "DEVICE_CREATE", "DEVICES", deviceId, { name });
     return db.prepare("SELECT * FROM devices WHERE device_id=?").get(deviceId);
 }
+
+function normalizeDeviceId(value) {
+    const input = String(value ?? "").trim();
+    if (!/^[A-Za-z0-9][A-Za-z0-9_-]{2,63}$/.test(input)) {
+        throw new Error("INVALID_DEVICE_ID");
+    }
+    return input;
+}
+
+function createDevice({
+    deviceId,
+    name,
+    location = null,
+    site = null,
+    description = null,
+    active = true,
+    actor = "ADMIN"
+}) {
+    const id = normalizeDeviceId(deviceId);
+    const cleanName = String(name ?? "").trim();
+
+    if (!cleanName) throw new Error("DEVICE_NAME_REQUIRED");
+
+    const exists = db.prepare(`
+        SELECT 1 FROM devices
+        WHERE device_id=?
+          AND (deleted_at IS NULL OR TRIM(deleted_at)='')
+        LIMIT 1
+    `).get(id);
+
+    if (exists) throw new Error("DEVICE_ID_ALREADY_EXISTS");
+
+    const ts = nowIso();
+    const placeholderSecret = crypto.randomBytes(32).toString("hex");
+
+    db.prepare(`
+        INSERT INTO devices(
+            device_id, name, location, site, description,
+            api_key_hash, active, paired_at, deleted_at,
+            created_at, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?)
+        ON CONFLICT(device_id) DO UPDATE SET
+            name=excluded.name,
+            location=excluded.location,
+            site=excluded.site,
+            description=excluded.description,
+            api_key_hash=excluded.api_key_hash,
+            active=excluded.active,
+            paired_at=NULL,
+            deleted_at=NULL,
+            updated_at=excluded.updated_at
+    `).run(
+        id,
+        cleanName,
+        String(location ?? "").trim() || null,
+        String(site ?? "").trim() || null,
+        String(description ?? "").trim() || null,
+        hashSecret(placeholderSecret),
+        boolInt(active, 1),
+        ts,
+        ts
+    );
+
+    audit("ADMIN", actor, "DEVICE_CREATE", "DEVICES", id, {
+        name: cleanName,
+        location: location ?? null,
+        site: site ?? null
+    });
+
+    return db.prepare("SELECT * FROM devices WHERE device_id=?").get(id);
+}
+
+function updateDevice(deviceId, changes = {}, actor = "ADMIN") {
+    const id = String(deviceId ?? "").trim();
+    const current = db.prepare(`
+        SELECT * FROM devices
+        WHERE device_id=?
+          AND (deleted_at IS NULL OR TRIM(deleted_at)='')
+        LIMIT 1
+    `).get(id);
+
+    if (!current) throw new Error("DEVICE_NOT_FOUND");
+
+    const name = changes.name === undefined ? current.name : String(changes.name ?? "").trim();
+    if (!name) throw new Error("DEVICE_NAME_REQUIRED");
+
+    const location = changes.location === undefined ? current.location : (String(changes.location ?? "").trim() || null);
+    const site = changes.site === undefined ? current.site : (String(changes.site ?? "").trim() || null);
+    const description = changes.description === undefined ? current.description : (String(changes.description ?? "").trim() || null);
+    const active = changes.active === undefined ? current.active : boolInt(changes.active, current.active);
+    const ts = nowIso();
+
+    db.prepare(`
+        UPDATE devices
+        SET name=?, location=?, site=?, description=?, active=?, updated_at=?
+        WHERE device_id=?
+    `).run(name, location, site, description, active, ts, id);
+
+    audit("ADMIN", actor, "DEVICE_UPDATE", "DEVICES", id, {
+        name, location, site, active: Boolean(active)
+    });
+
+    return db.prepare("SELECT * FROM devices WHERE device_id=?").get(id);
+}
+
+function softDeleteDevice(deviceId, actor = "ADMIN") {
+    const id = String(deviceId ?? "").trim();
+    const current = db.prepare(`
+        SELECT * FROM devices
+        WHERE device_id=?
+          AND (deleted_at IS NULL OR TRIM(deleted_at)='')
+        LIMIT 1
+    `).get(id);
+
+    if (!current) throw new Error("DEVICE_NOT_FOUND");
+
+    const ts = nowIso();
+    db.exec("BEGIN IMMEDIATE");
+    try {
+        db.prepare(`
+            UPDATE devices
+            SET active=0, deleted_at=?, updated_at=?
+            WHERE device_id=?
+        `).run(ts, ts, id);
+
+        db.prepare(`
+            UPDATE device_pairings
+            SET consumed_at=COALESCE(consumed_at, ?)
+            WHERE device_id=?
+        `).run(ts, id);
+
+        audit("ADMIN", actor, "DEVICE_DELETE", "DEVICES", id, {});
+        db.exec("COMMIT");
+    } catch (error) {
+        try { db.exec("ROLLBACK"); } catch (_) {}
+        throw error;
+    }
+
+    return true;
+}
+
+function generatePairingCode() {
+    return String(crypto.randomInt(0, 1000000)).padStart(6, "0");
+}
+
+function createDevicePairing(deviceId, actor = "ADMIN", ttlMinutes = 15) {
+    const id = String(deviceId ?? "").trim();
+    const device = db.prepare(`
+        SELECT * FROM devices
+        WHERE device_id=?
+          AND active=1
+          AND (deleted_at IS NULL OR TRIM(deleted_at)='')
+        LIMIT 1
+    `).get(id);
+
+    if (!device) throw new Error("DEVICE_NOT_FOUND_OR_INACTIVE");
+
+    const minutes = Math.max(5, Math.min(60, asInt(ttlMinutes, 15)));
+    const ts = nowIso();
+    const expiresAt = new Date(Date.now() + minutes * 60000).toISOString();
+
+    let code;
+    let codeHash;
+
+    for (let attempt = 0; attempt < 20; attempt++) {
+        const candidate = generatePairingCode();
+        const candidateHash = hashSecret(candidate);
+        const duplicate = db.prepare(`
+            SELECT 1 FROM device_pairings
+            WHERE code_hash=?
+              AND consumed_at IS NULL
+              AND expires_at>?
+            LIMIT 1
+        `).get(candidateHash, ts);
+
+        if (!duplicate) {
+            code = candidate;
+            codeHash = candidateHash;
+            break;
+        }
+    }
+
+    if (!code || !codeHash) throw new Error("PAIRING_CODE_GENERATION_FAILED");
+
+    db.exec("BEGIN IMMEDIATE");
+    try {
+        db.prepare(`
+            UPDATE device_pairings
+            SET consumed_at=COALESCE(consumed_at, ?)
+            WHERE device_id=? AND consumed_at IS NULL
+        `).run(ts, id);
+
+        db.prepare(`
+            INSERT INTO device_pairings(
+                device_id, code_hash, expires_at, consumed_at,
+                created_at, created_by
+            )
+            VALUES (?, ?, ?, NULL, ?, ?)
+        `).run(id, codeHash, expiresAt, ts, actor);
+
+        audit("ADMIN", actor, device.paired_at ? "DEVICE_REPAIR_CODE" : "DEVICE_PAIR_CODE", "DEVICES", id, {
+            expires_at: expiresAt
+        });
+        db.exec("COMMIT");
+    } catch (error) {
+        try { db.exec("ROLLBACK"); } catch (_) {}
+        throw error;
+    }
+
+    return { pairing_code: code, expires_at: expiresAt, ttl_minutes: minutes };
+}
+
+function getActivePairingInfo(deviceId) {
+    return db.prepare(`
+        SELECT id, expires_at, created_at
+        FROM device_pairings
+        WHERE device_id=?
+          AND consumed_at IS NULL
+          AND expires_at>?
+        ORDER BY id DESC
+        LIMIT 1
+    `).get(String(deviceId ?? "").trim(), nowIso()) ?? null;
+}
+
+function consumeDevicePairing(pairingCode, metadata = {}) {
+    const code = String(pairingCode ?? "").replace(/\D/g, "");
+    if (code.length !== 6) throw new Error("INVALID_PAIRING_CODE");
+
+    const ts = nowIso();
+    const row = db.prepare(`
+        SELECT p.*, d.name, d.location, d.site, d.description
+        FROM device_pairings p
+        JOIN devices d ON d.device_id=p.device_id
+        WHERE p.code_hash=?
+          AND p.consumed_at IS NULL
+          AND p.expires_at>?
+          AND d.active=1
+          AND (d.deleted_at IS NULL OR TRIM(d.deleted_at)='')
+        LIMIT 1
+    `).get(hashSecret(code), ts);
+
+    if (!row) throw new Error("PAIRING_CODE_INVALID_OR_EXPIRED");
+
+    const plainKey = crypto.randomBytes(32).toString("hex");
+
+    db.exec("BEGIN IMMEDIATE");
+    try {
+        db.prepare(`
+            UPDATE devices
+            SET api_key_hash=?,
+                app_version=COALESCE(?, app_version),
+                local_ip=COALESCE(?, local_ip),
+                tailscale_ip=COALESCE(?, tailscale_ip),
+                paired_at=?, last_seen_at=?, updated_at=?
+            WHERE device_id=?
+        `).run(
+            hashSecret(plainKey),
+            metadata.app_version ?? null,
+            metadata.local_ip ?? null,
+            metadata.tailscale_ip ?? null,
+            ts, ts, ts,
+            row.device_id
+        );
+
+        db.prepare("UPDATE device_pairings SET consumed_at=? WHERE id=?").run(ts, row.id);
+        db.prepare(`
+            UPDATE device_pairings
+            SET consumed_at=COALESCE(consumed_at, ?)
+            WHERE device_id=? AND consumed_at IS NULL
+        `).run(ts, row.device_id);
+
+        audit("DEVICE", row.device_id, "DEVICE_PAIRED", "DEVICES", row.device_id, {
+            hostname: metadata.hostname ?? null,
+            tailscale_ip: metadata.tailscale_ip ?? null,
+            app_version: metadata.app_version ?? null
+        });
+
+        db.exec("COMMIT");
+    } catch (error) {
+        try { db.exec("ROLLBACK"); } catch (_) {}
+        throw error;
+    }
+
+    return {
+        device_id: row.device_id,
+        device_name: row.name,
+        location: row.location,
+        site: row.site,
+        description: row.description,
+        device_api_key: plainKey,
+        paired_at: ts
+    };
+}
+
 
 function generateItemCode() {
     /*
@@ -495,5 +852,12 @@ module.exports = {
     setAdminConfig,
     createAdmin,
     createOrRotateDevice,
+    normalizeDeviceId,
+    createDevice,
+    updateDevice,
+    softDeleteDevice,
+    createDevicePairing,
+    getActivePairingInfo,
+    consumeDevicePairing,
     generateItemCode
 };

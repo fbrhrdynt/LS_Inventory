@@ -155,7 +155,7 @@ async function loadDashboard() {
                 <div class="quick-actions" style="padding:18px">
                     <button class="btn ghost" onclick="navigate('items'); setTimeout(openNewItem,150)">+ Add Item</button>
                     <button class="btn ghost" onclick="navigate('users'); setTimeout(openNewUser,150)">+ Add User</button>
-                    <button class="btn ghost" onclick="navigate('devices')">Device Maintenance</button>
+                    <button class="btn ghost" onclick="navigate('devices'); setTimeout(openNewDevice,150)">+ Add Device</button>
                     <button class="btn ghost" onclick="navigate('settings')">System Settings</button>
                 </div>
             </div>
@@ -347,16 +347,304 @@ async function loadTransactions() {
 
 async function loadDevices() {
     const data = await api("/api/v1/admin/devices");
-    $("devicesGrid").innerHTML = data.data.length ? data.data.map(d => {
-        const isOnline = online(d.last_seen_at);
-        return `<article class="device-card"><div class="device-title"><div><h3>${escapeHtml(d.name)}</h3><p>${escapeHtml(d.device_id)} · ${escapeHtml(d.location || "No location")}</p></div>${badge(isOnline ? "ACTIVE" : "INACTIVE")}</div><div class="device-metrics">
-            ${metric("Last Seen", formatDate(d.last_seen_at))}${metric("Last Sync", formatDate(d.last_sync_at))}${metric("NFC", d.nfc_status || "-")}${metric("Camera", d.camera_status || "-")}${metric("Pending", d.pending_count ?? 0)}${metric("CPU", d.cpu_temperature == null ? "-" : `${d.cpu_temperature} °C`)}${metric("Disk", d.disk_usage == null ? "-" : `${d.disk_usage}%`)}${metric("Uptime", humanUptime(d.uptime_seconds))}
-        </div></article>`;
-    }).join("") : `<div class="panel empty">No devices registered.</div>`;
+
+    $("devicesGrid").innerHTML = data.data.length
+        ? data.data.map(d => {
+            const isOnline = Boolean(d.active) && online(d.last_seen_at);
+            const waiting = Boolean(d.active) && !d.paired_at;
+            const statusText = !d.active ? "INACTIVE" : (waiting ? "WAITING" : (isOnline ? "ACTIVE" : "OFFLINE"));
+
+            return `
+                <article class="device-card">
+                    <div class="device-title">
+                        <div>
+                            <h3>${escapeHtml(d.name)}</h3>
+                            <p>${escapeHtml(d.device_id)} · ${escapeHtml(d.location || "No location")}</p>
+                            ${d.site ? `<p>${escapeHtml(d.site)}</p>` : ""}
+                        </div>
+                        ${badge(statusText)}
+                    </div>
+
+                    ${waiting ? `
+                        <div class="pairing-waiting">
+                            <strong>Waiting for pairing</strong>
+                            <span>${d.pairing_expires_at ? `Pairing code active until ${formatDate(d.pairing_expires_at)}` : "Generate a pairing code to connect this Raspberry Pi."}</span>
+                        </div>
+                    ` : ""}
+
+                    <div class="device-metrics">
+                        ${metric("Last Seen", formatDate(d.last_seen_at))}
+                        ${metric("Last Sync", formatDate(d.last_sync_at))}
+                        ${metric("Paired", formatDate(d.paired_at))}
+                        ${metric("Tailscale IP", d.tailscale_ip || "-")}
+                        ${metric("NFC", d.nfc_status || "-")}
+                        ${metric("Camera", d.camera_status || "-")}
+                        ${metric("Pending", d.pending_count ?? 0)}
+                        ${metric("CPU", d.cpu_temperature == null ? "-" : `${d.cpu_temperature} °C`)}
+                        ${metric("Disk", d.disk_usage == null ? "-" : `${d.disk_usage}%`)}
+                        ${metric("Uptime", humanUptime(d.uptime_seconds))}
+                    </div>
+
+                    ${d.description ? `<p class="device-description">${escapeHtml(d.description)}</p>` : ""}
+
+                    <div class="device-actions">
+                        <button class="btn ghost small" data-device-pair="${encodeURIComponent(d.device_id)}">
+                            ${d.paired_at ? "Re-pair" : "Pair"}
+                        </button>
+                        <button class="btn ghost small" data-device-edit='${encodeURIComponent(JSON.stringify(d))}'>Edit</button>
+                        <button class="btn ghost small" data-device-toggle='${encodeURIComponent(JSON.stringify(d))}'>
+                            ${d.active ? "Disable" : "Enable"}
+                        </button>
+                        <button class="btn danger small" data-device-delete='${encodeURIComponent(JSON.stringify(d))}'>Delete</button>
+                    </div>
+                </article>
+            `;
+        }).join("")
+        : `<div class="panel empty">No devices registered.</div>`;
+
+    document.querySelectorAll("[data-device-pair]").forEach(button => {
+        button.addEventListener("click", () => generateDevicePairing(decodeURIComponent(button.dataset.devicePair)));
+    });
+
+    document.querySelectorAll("[data-device-edit]").forEach(button => {
+        button.addEventListener("click", () => openEditDevice(JSON.parse(decodeURIComponent(button.dataset.deviceEdit))));
+    });
+
+    document.querySelectorAll("[data-device-toggle]").forEach(button => {
+        button.addEventListener("click", () => toggleDevice(JSON.parse(decodeURIComponent(button.dataset.deviceToggle))));
+    });
+
+    document.querySelectorAll("[data-device-delete]").forEach(button => {
+        button.addEventListener("click", () => deleteDevice(JSON.parse(decodeURIComponent(button.dataset.deviceDelete))));
+    });
 }
 
-function metric(label, value) { return `<div class="metric"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value ?? "-")}</strong></div>`; }
-function humanUptime(seconds) { const s = Number(seconds || 0); if (!s) return "-"; const d=Math.floor(s/86400), h=Math.floor((s%86400)/3600), m=Math.floor((s%3600)/60); return `${d}d ${h}h ${m}m`; }
+function metric(label, value) {
+    return `<div class="metric"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value ?? "-")}</strong></div>`;
+}
+
+function humanUptime(seconds) {
+    const s = Number(seconds || 0);
+    if (!s) return "-";
+    const d = Math.floor(s / 86400);
+    const h = Math.floor((s % 86400) / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    return `${d}d ${h}h ${m}m`;
+}
+
+function deviceForm(device = {}) {
+    const editing = Boolean(device.device_id);
+
+    return `
+        <label>Device ID
+            <input
+                name="device_id"
+                required
+                ${editing ? "readonly" : ""}
+                placeholder="LS_Cab_Workshop01"
+                value="${escapeHtml(device.device_id || "")}">
+        </label>
+
+        <label>Device Name
+            <input
+                name="name"
+                required
+                placeholder="Workshop Cabinet 01"
+                value="${escapeHtml(device.name || "")}">
+        </label>
+
+        <label>Site
+            <input
+                name="site"
+                placeholder="Cikarang"
+                value="${escapeHtml(device.site || "")}">
+        </label>
+
+        <label>Location
+            <input
+                name="location"
+                placeholder="Workshop"
+                value="${escapeHtml(device.location || "")}">
+        </label>
+
+        <label class="full-row">Description
+            <textarea name="description" rows="3" placeholder="Tools inventory cabinet">${escapeHtml(device.description || "")}</textarea>
+        </label>
+
+        <label>Status
+            <select name="active">
+                <option value="true" ${device.active !== 0 && device.active !== false ? "selected" : ""}>ACTIVE</option>
+                <option value="false" ${device.active === 0 || device.active === false ? "selected" : ""}>INACTIVE</option>
+            </select>
+        </label>
+
+        ${editing ? `
+            <div class="full-row info-box">
+                <strong>Device ID is permanent</strong>
+                <span>Change the display name, location, site, or status here. Use Re-pair to rotate credentials.</span>
+            </div>
+        ` : `
+            <div class="full-row info-box">
+                <strong>Pairing code</strong>
+                <span>A 6-digit single-use pairing code will be generated automatically and expires after 15 minutes.</span>
+            </div>
+        `}
+
+        <div class="form-actions">
+            <button type="button" class="btn ghost" onclick="closeModal()">Cancel</button>
+            <button class="btn primary" type="submit">${editing ? "Save Device" : "Create Device"}</button>
+        </div>
+    `;
+}
+
+function openNewDevice() {
+    openModal("Add Device", deviceForm(), async form => {
+        const values = Object.fromEntries(new FormData(form).entries());
+
+        const result = await api("/api/v1/admin/devices", {
+            method: "POST",
+            body: JSON.stringify({
+                device_id: values.device_id.trim(),
+                name: values.name.trim(),
+                site: values.site.trim(),
+                location: values.location.trim(),
+                description: values.description.trim(),
+                active: values.active === "true",
+                pairing_ttl_minutes: 15
+            })
+        });
+
+        toast(`Device ${result.data.device_id} created`);
+        loadDevices().catch(handleError);
+        loadDashboard().catch(() => {});
+
+        if (result.pairing?.pairing_code) {
+            showPairingCode(result.data, result.pairing);
+        } else {
+            closeModal();
+        }
+    });
+}
+
+function openEditDevice(device) {
+    openModal("Edit Device", deviceForm(device), async form => {
+        const values = Object.fromEntries(new FormData(form).entries());
+
+        await api(`/api/v1/admin/devices/${encodeURIComponent(device.device_id)}`, {
+            method: "PUT",
+            body: JSON.stringify({
+                name: values.name.trim(),
+                site: values.site.trim(),
+                location: values.location.trim(),
+                description: values.description.trim(),
+                active: values.active === "true"
+            })
+        });
+
+        closeModal();
+        toast("Device updated");
+        loadDevices().catch(handleError);
+        loadDashboard().catch(() => {});
+    });
+}
+
+async function generateDevicePairing(deviceId) {
+    try {
+        const result = await api(`/api/v1/admin/devices/${encodeURIComponent(deviceId)}/pairing`, {
+            method: "POST",
+            body: JSON.stringify({ ttl_minutes: 15 })
+        });
+
+        showPairingCode({ device_id: deviceId }, result.pairing);
+        loadDevices().catch(() => {});
+    } catch (error) {
+        handleError(error);
+    }
+}
+
+function showPairingCode(device, pairing) {
+    const code = String(pairing.pairing_code || "");
+    const expires = formatDate(pairing.expires_at);
+
+    openModal(
+        "Device Pairing",
+        `
+            <div class="full-row pairing-panel">
+                <span class="pairing-label">${escapeHtml(device.device_id || "Device")}</span>
+                <div class="pairing-code">${escapeHtml(code)}</div>
+                <p>This code is single-use and expires at <strong>${escapeHtml(expires)}</strong>.</p>
+            </div>
+
+            <div class="full-row pairing-steps">
+                <strong>On the new Raspberry Pi:</strong>
+                <code>cd /opt/LS_Inventory</code>
+                <code>node scripts/pair_device.js</code>
+                <span>Enter this pairing code when prompted.</span>
+            </div>
+
+            <div class="form-actions">
+                <button id="copyPairingBtn" type="button" class="btn ghost">Copy Code</button>
+                <button type="button" class="btn primary" onclick="closeModal()">Done</button>
+            </div>
+        `
+    );
+
+    const copyButton = $("copyPairingBtn");
+
+    if (copyButton) {
+        copyButton.addEventListener("click", async () => {
+            try {
+                await navigator.clipboard.writeText(code);
+                toast("Pairing code copied");
+            } catch (_) {
+                toast(`Pairing code: ${code}`);
+            }
+        });
+    }
+}
+
+async function toggleDevice(device) {
+    const nextActive = !Boolean(device.active);
+    const action = nextActive ? "enable" : "disable";
+
+    if (!confirm(`${action === "enable" ? "Enable" : "Disable"} ${device.name}?`)) {
+        return;
+    }
+
+    try {
+        await api(`/api/v1/admin/devices/${encodeURIComponent(device.device_id)}`, {
+            method: "PUT",
+            body: JSON.stringify({ active: nextActive })
+        });
+
+        toast(`Device ${action}d`);
+        loadDevices().catch(handleError);
+        loadDashboard().catch(() => {});
+    } catch (error) {
+        handleError(error);
+    }
+}
+
+async function deleteDevice(device) {
+    if (!confirm(`Delete ${device.name} (${device.device_id})?\n\nThis removes it from the active device list and invalidates outstanding pairing codes. Transaction history is kept.`)) {
+        return;
+    }
+
+    try {
+        await api(`/api/v1/admin/devices/${encodeURIComponent(device.device_id)}`, {
+            method: "DELETE"
+        });
+
+        toast("Device deleted");
+        loadDevices().catch(handleError);
+        loadDashboard().catch(() => {});
+    } catch (error) {
+        handleError(error);
+    }
+}
+
+
+$("addDeviceBtn").addEventListener("click", openNewDevice);
 
 async function loadSettings() {
     const data = await api("/api/v1/admin/settings");
@@ -407,6 +695,7 @@ window.closeModal = closeModal;
 window.navigate = navigate;
 window.openNewItem = openNewItem;
 window.openNewUser = openNewUser;
+window.openNewDevice = openNewDevice;
 $("modalClose").addEventListener("click", closeModal);
 $("modal").addEventListener("click", event => { if (event.target === $("modal")) closeModal(); });
 

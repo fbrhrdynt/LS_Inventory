@@ -27,6 +27,11 @@ const {
     upsertItem,
     setSetting,
     setAdminConfig,
+    createDevice,
+    updateDevice,
+    softDeleteDevice,
+    createDevicePairing,
+    consumeDevicePairing,
     generateItemCode
 } = require("./db");
 
@@ -109,13 +114,63 @@ function requireDevice(req, res, next) {
     const deviceKey = String(req.headers["x-device-key"] || "").trim();
     if (!deviceId || !deviceKey) return res.status(401).json({ success: false, error: "DEVICE_CREDENTIALS_REQUIRED" });
 
-    const device = db.prepare("SELECT * FROM devices WHERE device_id=? AND active=1 LIMIT 1").get(deviceId);
+    const device = db.prepare(`
+        SELECT *
+        FROM devices
+        WHERE device_id=?
+          AND active=1
+          AND (deleted_at IS NULL OR TRIM(deleted_at)='')
+        LIMIT 1
+    `).get(deviceId);
     if (!device || device.api_key_hash !== hashSecret(deviceKey)) {
         return res.status(401).json({ success: false, error: "INVALID_DEVICE_CREDENTIALS" });
     }
 
     req.device = device;
     next();
+}
+
+
+const pairingAttemptBuckets = new Map();
+
+function pairingClientKey(req) {
+    /*
+     * Do not trust X-Forwarded-For here unless Express is explicitly
+     * configured with a trusted reverse proxy. The socket address cannot
+     * be spoofed through a normal HTTP header.
+     */
+    return String(
+        req.socket?.remoteAddress
+        || "unknown"
+    ).trim();
+}
+
+function allowPairingAttempt(req) {
+    const key = pairingClientKey(req);
+    const now = Date.now();
+    const windowMs = 10 * 60 * 1000;
+    const maxAttempts = 8;
+
+    let bucket = pairingAttemptBuckets.get(key);
+
+    if (!bucket || now - bucket.started_at >= windowMs) {
+        bucket = { started_at: now, attempts: 0 };
+    }
+
+    bucket.attempts++;
+    pairingAttemptBuckets.set(key, bucket);
+
+    return {
+        allowed: bucket.attempts <= maxAttempts,
+        retry_after_seconds: Math.max(
+            1,
+            Math.ceil((bucket.started_at + windowMs - now) / 1000)
+        )
+    };
+}
+
+function clearPairingAttempts(req) {
+    pairingAttemptBuckets.delete(pairingClientKey(req));
 }
 
 function begin() { db.exec("BEGIN IMMEDIATE"); }
@@ -468,7 +523,7 @@ app.get("/api/v1/admin/dashboard", requireAdmin, (req, res) => {
             low_stock: one("SELECT COUNT(*) AS c FROM items WHERE status='LOW_STOCK' AND deleted_at IS NULL"),
             out_of_stock: one("SELECT COUNT(*) AS c FROM items WHERE status='OUT_OF_STOCK' AND deleted_at IS NULL"),
             transactions: one("SELECT COUNT(*) AS c FROM transactions"),
-            online_devices: one("SELECT COUNT(*) AS c FROM devices WHERE active=1 AND last_seen_at IS NOT NULL AND julianday(last_seen_at) >= julianday('now','-3 minutes')")
+            online_devices: one("SELECT COUNT(*) AS c FROM devices WHERE active=1 AND (deleted_at IS NULL OR TRIM(deleted_at)='') AND last_seen_at IS NOT NULL AND julianday(last_seen_at) >= julianday('now','-3 minutes')")
         },
         recent
     });
@@ -684,13 +739,157 @@ app.get("/api/v1/admin/transactions", requireAdmin, (req, res) => {
 
 app.get("/api/v1/admin/devices", requireAdmin, (req, res) => {
     const data = db.prepare(`
-        SELECT device_id, name, location, active, app_version, local_ip, tailscale_ip,
-               cpu_temperature, disk_usage, uptime_seconds, nfc_status, camera_status,
-               pending_count, last_sync_at, last_seen_at, created_at, updated_at
-        FROM devices ORDER BY name COLLATE NOCASE
-    `).all();
+        SELECT
+            d.device_id,
+            d.name,
+            d.location,
+            d.site,
+            d.description,
+            d.active,
+            d.app_version,
+            d.local_ip,
+            d.tailscale_ip,
+            d.cpu_temperature,
+            d.disk_usage,
+            d.uptime_seconds,
+            d.nfc_status,
+            d.camera_status,
+            d.pending_count,
+            d.last_sync_at,
+            d.last_seen_at,
+            d.paired_at,
+            d.created_at,
+            d.updated_at,
+            (
+                SELECT p.expires_at
+                FROM device_pairings p
+                WHERE p.device_id=d.device_id
+                  AND p.consumed_at IS NULL
+                  AND p.expires_at>?
+                ORDER BY p.id DESC
+                LIMIT 1
+            ) AS pairing_expires_at
+        FROM devices d
+        WHERE d.deleted_at IS NULL OR TRIM(d.deleted_at)=''
+        ORDER BY d.name COLLATE NOCASE
+    `).all(nowIso());
+
     res.json({ success: true, data });
 });
+
+app.post("/api/v1/admin/devices", requireAdmin, (req, res, next) => {
+    try {
+        const body = req.body || {};
+
+        const device = createDevice({
+            deviceId: body.device_id,
+            name: body.name,
+            location: body.location,
+            site: body.site,
+            description: body.description,
+            active: body.active ?? true,
+            actor: req.admin.username
+        });
+
+        let pairing = null;
+
+        if (device.active) {
+            pairing = createDevicePairing(
+                device.device_id,
+                req.admin.username,
+                body.pairing_ttl_minutes ?? 15
+            );
+        }
+
+        res.status(201).json({
+            success: true,
+            data: {
+                device_id: device.device_id,
+                name: device.name,
+                location: device.location,
+                site: device.site,
+                description: device.description,
+                active: Boolean(device.active),
+                paired_at: device.paired_at
+            },
+            pairing
+        });
+    } catch (error) {
+        if (error.message === "DEVICE_ID_ALREADY_EXISTS") {
+            return res.status(409).json({ success: false, error: error.message });
+        }
+        if (["INVALID_DEVICE_ID", "DEVICE_NAME_REQUIRED"].includes(error.message)) {
+            return res.status(400).json({ success: false, error: error.message });
+        }
+        next(error);
+    }
+});
+
+app.put("/api/v1/admin/devices/:deviceId", requireAdmin, (req, res, next) => {
+    try {
+        const device = updateDevice(
+            req.params.deviceId,
+            req.body || {},
+            req.admin.username
+        );
+
+        res.json({
+            success: true,
+            data: {
+                device_id: device.device_id,
+                name: device.name,
+                location: device.location,
+                site: device.site,
+                description: device.description,
+                active: Boolean(device.active),
+                paired_at: device.paired_at,
+                last_seen_at: device.last_seen_at
+            }
+        });
+    } catch (error) {
+        if (error.message === "DEVICE_NOT_FOUND") {
+            return res.status(404).json({ success: false, error: error.message });
+        }
+        if (error.message === "DEVICE_NAME_REQUIRED") {
+            return res.status(400).json({ success: false, error: error.message });
+        }
+        next(error);
+    }
+});
+
+app.post("/api/v1/admin/devices/:deviceId/pairing", requireAdmin, (req, res, next) => {
+    try {
+        const pairing = createDevicePairing(
+            req.params.deviceId,
+            req.admin.username,
+            req.body?.ttl_minutes ?? 15
+        );
+
+        res.json({
+            success: true,
+            device_id: req.params.deviceId,
+            pairing
+        });
+    } catch (error) {
+        if (error.message === "DEVICE_NOT_FOUND_OR_INACTIVE") {
+            return res.status(404).json({ success: false, error: error.message });
+        }
+        next(error);
+    }
+});
+
+app.delete("/api/v1/admin/devices/:deviceId", requireAdmin, (req, res, next) => {
+    try {
+        softDeleteDevice(req.params.deviceId, req.admin.username);
+        res.json({ success: true });
+    } catch (error) {
+        if (error.message === "DEVICE_NOT_FOUND") {
+            return res.status(404).json({ success: false, error: error.message });
+        }
+        next(error);
+    }
+});
+
 
 app.get("/api/v1/admin/settings", requireAdmin, (req, res) => {
     const settings = {};
@@ -706,6 +905,70 @@ app.put("/api/v1/admin/settings", requireAdmin, (req, res) => {
     for (const [k, v] of Object.entries(settings)) setSetting(k, v, req.admin.username);
     for (const [k, v] of Object.entries(adminConfig)) setAdminConfig(k, v, req.admin.username);
     res.json({ success: true });
+});
+
+
+/*
+ * =========================================================
+ * DEVICE PAIRING
+ *
+ * Public only inside the Central HTTP service. Authentication
+ * is the short-lived single-use 6-digit pairing code.
+ * Rate limited per source address.
+ * =========================================================
+ */
+app.post("/api/v1/device/pair", (req, res, next) => {
+    try {
+        const limiter = allowPairingAttempt(req);
+
+        if (!limiter.allowed) {
+            res.setHeader("Retry-After", String(limiter.retry_after_seconds));
+            return res.status(429).json({
+                success: false,
+                error: "PAIRING_RATE_LIMITED",
+                retry_after_seconds: limiter.retry_after_seconds
+            });
+        }
+
+        const code = String(req.body?.pairing_code || "").replace(/\D/g, "");
+
+        if (code.length !== 6) {
+            return res.status(400).json({
+                success: false,
+                error: "INVALID_PAIRING_CODE"
+            });
+        }
+
+        const result = consumeDevicePairing(code, {
+            hostname: String(req.body?.hostname || "").trim() || null,
+            app_version: String(req.body?.app_version || "").trim() || null,
+            local_ip: String(req.body?.local_ip || "").trim() || null,
+            tailscale_ip: String(req.body?.tailscale_ip || "").trim() || null
+        });
+
+        clearPairingAttempts(req);
+
+        res.json({
+            success: true,
+            device: {
+                device_id: result.device_id,
+                device_name: result.device_name,
+                location: result.location,
+                site: result.site,
+                description: result.description,
+                paired_at: result.paired_at
+            },
+            credentials: {
+                device_api_key: result.device_api_key
+            },
+            server_time: nowIso()
+        });
+    } catch (error) {
+        if (["PAIRING_CODE_INVALID_OR_EXPIRED", "INVALID_PAIRING_CODE"].includes(error.message)) {
+            return res.status(401).json({ success: false, error: error.message });
+        }
+        next(error);
+    }
 });
 
 app.get("/api/v1/device/snapshot/:entity", requireDevice, (req, res) => {
@@ -759,6 +1022,7 @@ app.post("/api/v1/device/heartbeat", requireDevice, (req, res) => {
             disk_usage=COALESCE(?,disk_usage), uptime_seconds=COALESCE(?,uptime_seconds),
             nfc_status=COALESCE(?,nfc_status), camera_status=COALESCE(?,camera_status),
             pending_count=COALESCE(?,pending_count), last_sync_at=COALESCE(?,last_sync_at),
+            paired_at=COALESCE(paired_at, ?),
             last_seen_at=?, updated_at=?
         WHERE device_id=?
     `).run(
@@ -772,6 +1036,7 @@ app.post("/api/v1/device/heartbeat", requireDevice, (req, res) => {
         body.camera_status ?? null,
         body.pending_count ?? null,
         body.last_sync_at ?? null,
+        ts,
         ts,
         ts,
         req.device.device_id
