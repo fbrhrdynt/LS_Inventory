@@ -37,8 +37,9 @@
             <button class="nav-item" data-view="items">Inventory</button>
             <button class="nav-item" data-view="users">Users</button>
             <button class="nav-item" data-view="transactions">Transactions</button>
-            <button class="nav-item" data-view="devices">Devices & Maintenance</button>
-            <button class="nav-item" data-view="settings">Settings</button>
+            <button class="nav-item" data-view="devices" data-admin-only>Devices & Maintenance</button>
+            <button class="nav-item" data-view="adminUsers" data-admin-only>Admin Users</button>
+            <button class="nav-item" data-view="settings" data-admin-only>Settings</button>
         </nav>
 
         <div class="sidebar-footer">
@@ -97,6 +98,41 @@
                 <button id="addDeviceBtn" class="btn primary">+ Add Device</button>
             </div>
             <div id="devicesGrid" class="device-grid"></div>
+        </section>
+
+
+        <section id="adminUsersView" class="view hidden">
+            <div class="toolbar">
+                <div class="toolbar-left">
+                    <input
+                        id="adminUserSearch"
+                        class="search"
+                        placeholder="Search admin name or username...">
+                </div>
+                <button id="addAdminUserBtn" class="btn primary">
+                    + Add Admin User
+                </button>
+            </div>
+
+            <div class="panel">
+                <div class="table-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Name</th>
+                                <th>Username</th>
+                                <th>Role</th>
+                                <th>Status</th>
+                                <th>Updated</th>
+                                <th></th>
+                            </tr>
+                        </thead>
+                        <tbody id="adminUsersBody"></tbody>
+                    </table>
+                </div>
+
+                <div id="adminUsersPager" class="pager"></div>
+            </div>
         </section>
 
         <section id="settingsView" class="view hidden">

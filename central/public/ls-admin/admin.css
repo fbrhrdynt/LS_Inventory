@@ -16,3 +16,14 @@
 .pairing-panel p{margin:0;color:var(--muted);font-size:12px}
 .pairing-steps{display:grid;gap:8px;padding:14px;border:1px solid var(--line);border-radius:12px}
 .pairing-steps code{display:block;background:#0b1220;color:#e8eef7;padding:9px 11px;border-radius:9px;font-size:12px;overflow:auto}
+
+
+/* Admin account management */
+.badge.admin-role{
+    background:#eef3ff;
+    color:#315da8;
+}
+.btn:disabled{
+    opacity:.48;
+    cursor:not-allowed;
+}

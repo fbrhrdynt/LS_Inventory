@@ -5,6 +5,7 @@ const state = {
     itemsPage: 1,
     usersPage: 1,
     transactionsPage: 1,
+    adminUsersPage: 1,
     pageSize: 50,
     me: null
 };
@@ -58,6 +59,59 @@ function online(lastSeen) {
     return Date.now() - new Date(lastSeen).getTime() < 180000;
 }
 
+
+function normalizedAdminRole(value) {
+    const role = String(value || "")
+        .trim()
+        .toUpperCase()
+        .replace(/[\s-]+/g, "_");
+
+    if (role === "SUPERADMIN" || role === "ADMINISTRATOR") {
+        return "ADMINISTRATOR";
+    }
+
+    if (role === "ADMIN_STAFF" || role === "STAFF") {
+        return "ADMIN_STAFF";
+    }
+
+    return role;
+}
+
+function isAdministrator() {
+    return normalizedAdminRole(state.me?.role) === "ADMINISTRATOR";
+}
+
+function adminRoleLabel(value) {
+    return normalizedAdminRole(value) === "ADMINISTRATOR"
+        ? "Administrator"
+        : "Admin Staff";
+}
+
+function applyRoleVisibility() {
+    const administrator = isAdministrator();
+
+    document
+        .querySelectorAll("[data-admin-only]")
+        .forEach(element => {
+            element.classList.toggle(
+                "hidden",
+                !administrator
+            );
+        });
+}
+
+function canAccessView(view) {
+    const staffViews = new Set([
+        "dashboard",
+        "items",
+        "users",
+        "transactions"
+    ]);
+
+    return isAdministrator()
+        || staffViews.has(view);
+}
+
 async function checkSession() {
     try {
         const data = await api("/api/v1/admin/me");
@@ -76,7 +130,8 @@ function showLogin() {
 function showApp() {
     $("loginView").classList.add("hidden");
     $("appView").classList.remove("hidden");
-    $("adminIdentity").innerHTML = `<strong>${escapeHtml(state.me?.display_name || state.me?.username || "Admin")}</strong><br><span>${escapeHtml(state.me?.role || "ADMIN")}</span>`;
+    $("adminIdentity").innerHTML = `<strong>${escapeHtml(state.me?.display_name || state.me?.username || "Admin")}</strong><br><span>${escapeHtml(adminRoleLabel(state.me?.role))}</span>`;
+    applyRoleVisibility();
     navigate("dashboard");
 }
 
@@ -102,6 +157,11 @@ $("logoutBtn").addEventListener("click", async () => {
 });
 
 function navigate(view) {
+    if (!canAccessView(view)) {
+        toast("Administrator access required.");
+        return;
+    }
+
     state.view = view;
     document.querySelectorAll(".nav-item").forEach(btn => btn.classList.toggle("active", btn.dataset.view === view));
     document.querySelectorAll(".view").forEach(el => el.classList.add("hidden"));
@@ -114,12 +174,21 @@ function navigate(view) {
         users: ["Users", "NFC users and access status"],
         transactions: ["Transactions", "Borrow, Return, and Consumable history"],
         devices: ["Devices & Maintenance", "Cabinet health and synchronization"],
+        adminUsers: ["Admin Users", "Accounts allowed to access LS Inventory Web Admin"],
         settings: ["Settings", "Central configuration distributed to cabinets"]
     };
     $("pageTitle").textContent = titles[view][0];
     $("pageSubtitle").textContent = titles[view][1];
 
-    const loaders = { dashboard: loadDashboard, items: loadItems, users: loadUsers, transactions: loadTransactions, devices: loadDevices, settings: loadSettings };
+    const loaders = {
+        dashboard: loadDashboard,
+        items: loadItems,
+        users: loadUsers,
+        transactions: loadTransactions,
+        devices: loadDevices,
+        adminUsers: loadAdminUsers,
+        settings: loadSettings
+    };
     loaders[view]().catch(handleError);
 }
 
@@ -129,6 +198,15 @@ $("menuBtn").addEventListener("click", () => $("sidebar").classList.toggle("open
 function handleError(error) {
     console.error(error);
     if (error.status === 401) return showLogin();
+
+    if (error.status === 403) {
+        toast("Administrator access required.");
+        if (!canAccessView(state.view)) {
+            navigate("dashboard");
+        }
+        return;
+    }
+
     $("connectionBadge").textContent = "Central Error";
     $("connectionBadge").className = "status-pill bad";
     toast(error.message || "Request failed");
@@ -155,8 +233,11 @@ async function loadDashboard() {
                 <div class="quick-actions" style="padding:18px">
                     <button class="btn ghost" onclick="navigate('items'); setTimeout(openNewItem,150)">+ Add Item</button>
                     <button class="btn ghost" onclick="navigate('users'); setTimeout(openNewUser,150)">+ Add User</button>
-                    <button class="btn ghost" onclick="navigate('devices'); setTimeout(openNewDevice,150)">+ Add Device</button>
-                    <button class="btn ghost" onclick="navigate('settings')">System Settings</button>
+                    ${isAdministrator() ? `
+                        <button class="btn ghost" onclick="navigate('devices'); setTimeout(openNewDevice,150)">+ Add Device</button>
+                        <button class="btn ghost" onclick="navigate('adminUsers'); setTimeout(openNewAdminUser,150)">+ Add Admin User</button>
+                        <button class="btn ghost" onclick="navigate('settings')">System Settings</button>
+                    ` : ""}
                 </div>
             </div>
         </div>`;
@@ -182,10 +263,56 @@ async function loadItems() {
         <td><strong>${escapeHtml(item.ITEM_CODE)}</strong><br><span class="muted">${escapeHtml(item.ITEM_NO)}</span></td>
         <td><strong>${escapeHtml(item.ITEM_NAME)}</strong><br><span class="muted">${escapeHtml(item.CATEGORY)}</span></td>
         <td>${escapeHtml(item.TYPE)}</td><td>${escapeHtml(item.STOCK)}</td><td>${badge(item.STATUS)}</td><td>${escapeHtml(item.LOCATION || "-")}</td><td>${escapeHtml(item.BORROWED_BY_NAME || "-")}</td>
-        <td style="white-space:nowrap"><button class="btn ghost small" data-qr-item='${encodeURIComponent(JSON.stringify(item))}'>QR</button> <button class="btn ghost small" data-edit-item='${encodeURIComponent(JSON.stringify(item))}'>Edit</button></td></tr>`).join("") : `<tr><td colspan="8" class="empty">No items found.</td></tr>`;
+        <td style="white-space:nowrap">
+            <button class="btn ghost small" data-qr-item='${encodeURIComponent(JSON.stringify(item))}'>QR</button>
+            <button class="btn ghost small" data-edit-item='${encodeURIComponent(JSON.stringify(item))}'>Edit</button>
+            <button class="btn danger small" data-delete-item='${encodeURIComponent(JSON.stringify(item))}'>Delete</button>
+        </td></tr>`).join("") : `<tr><td colspan="8" class="empty">No items found.</td></tr>`;
+
     document.querySelectorAll("[data-qr-item]").forEach(btn => btn.addEventListener("click", () => showItemQr(JSON.parse(decodeURIComponent(btn.dataset.qrItem)))));
     document.querySelectorAll("[data-edit-item]").forEach(btn => btn.addEventListener("click", () => openEditItem(JSON.parse(decodeURIComponent(btn.dataset.editItem)))));
+    document.querySelectorAll("[data-delete-item]").forEach(btn => btn.addEventListener("click", () => deleteItem(JSON.parse(decodeURIComponent(btn.dataset.deleteItem)))));
+
     renderPager("itemsPager", data, page => { state.itemsPage = page; loadItems().catch(handleError); });
+}
+
+
+async function deleteItem(item) {
+    if (String(item.STATUS || "").toUpperCase() === "BORROWED") {
+        toast("Borrowed item must be returned before it can be deleted.");
+        return;
+    }
+
+    const confirmed = confirm(
+        `Delete ${item.ITEM_NAME} (${item.ITEM_CODE})?\n\n` +
+        `This removes the item from active Inventory and all cabinets after synchronization.\n` +
+        `Transaction history is kept.`
+    );
+
+    if (!confirmed) {
+        return;
+    }
+
+    try {
+        await api(
+            `/api/v1/admin/items/${encodeURIComponent(item.UUID)}`,
+            {
+                method: "DELETE"
+            }
+        );
+
+        toast("Item deleted");
+        loadItems().catch(handleError);
+        loadDashboard().catch(() => {});
+
+    } catch (error) {
+        if (error.message === "ITEM_CURRENTLY_BORROWED") {
+            toast("Borrowed item must be returned before it can be deleted.");
+            return;
+        }
+
+        handleError(error);
+    }
 }
 
 function openNewItem() {
@@ -330,6 +457,521 @@ function bindNfcCaptureButton() {
             button.textContent = "Read NFC Card";
         }
     });
+}
+
+
+/* =========================================================
+   ADMIN USERS
+========================================================= */
+
+let adminUserSearchTimer;
+
+$("adminUserSearch").addEventListener(
+    "input",
+    () => {
+        clearTimeout(
+            adminUserSearchTimer
+        );
+
+        adminUserSearchTimer =
+            setTimeout(
+                () => {
+                    state.adminUsersPage = 1;
+                    loadAdminUsers().catch(handleError);
+                },
+                250
+            );
+    }
+);
+
+$("addAdminUserBtn").addEventListener(
+    "click",
+    openNewAdminUser
+);
+
+async function loadAdminUsers() {
+    if (!isAdministrator()) {
+        return;
+    }
+
+    const q =
+        new URLSearchParams({
+            page: state.adminUsersPage,
+            limit: state.pageSize
+        });
+
+    if (
+        $("adminUserSearch")
+            .value
+            .trim()
+    ) {
+        q.set(
+            "search",
+            $("adminUserSearch")
+                .value
+                .trim()
+        );
+    }
+
+    const data =
+        await api(
+            `/api/v1/admin/admin-users?${q}`
+        );
+
+    $("adminUsersBody").innerHTML =
+        data.data.length
+            ?
+            data.data.map(
+                account => `
+                    <tr>
+                        <td>
+                            <strong>${escapeHtml(account.display_name || "-")}</strong>
+                        </td>
+
+                        <td>${escapeHtml(account.username)}</td>
+
+                        <td>
+                            <span class="badge admin-role">
+                                ${escapeHtml(adminRoleLabel(account.role))}
+                            </span>
+                        </td>
+
+                        <td>
+                            ${badge(account.active ? "ACTIVE" : "INACTIVE")}
+                        </td>
+
+                        <td>${formatDate(account.updated_at)}</td>
+
+                        <td style="white-space:nowrap">
+                            <button
+                                class="btn ghost small"
+                                data-edit-admin='${encodeURIComponent(JSON.stringify(account))}'>
+                                Edit
+                            </button>
+
+                            <button
+                                class="btn danger small"
+                                data-delete-admin='${encodeURIComponent(JSON.stringify(account))}'
+                                ${Number(account.id) === Number(state.me?.id) ? "disabled" : ""}>
+                                Delete
+                            </button>
+                        </td>
+                    </tr>
+                `
+            ).join("")
+            :
+            `<tr>
+                <td colspan="6" class="empty">
+                    No Admin Users found.
+                </td>
+            </tr>`;
+
+    document
+        .querySelectorAll("[data-edit-admin]")
+        .forEach(
+            button =>
+                button.addEventListener(
+                    "click",
+                    () => openEditAdminUser(
+                        JSON.parse(
+                            decodeURIComponent(
+                                button.dataset.editAdmin
+                            )
+                        )
+                    )
+                )
+        );
+
+    document
+        .querySelectorAll("[data-delete-admin]")
+        .forEach(
+            button =>
+                button.addEventListener(
+                    "click",
+                    () => deleteAdminUser(
+                        JSON.parse(
+                            decodeURIComponent(
+                                button.dataset.deleteAdmin
+                            )
+                        )
+                    )
+                )
+        );
+
+    renderPager(
+        "adminUsersPager",
+        data,
+        page => {
+            state.adminUsersPage = page;
+            loadAdminUsers().catch(handleError);
+        }
+    );
+}
+
+function adminUserForm(
+    account = {}
+) {
+    const editing =
+        Boolean(
+            account.id
+        );
+
+    const role =
+        normalizedAdminRole(
+            account.role
+            ||
+            "ADMIN_STAFF"
+        );
+
+    const active =
+        account.active === undefined
+            ?
+            true
+            :
+            Boolean(
+                account.active
+            );
+
+    return `
+        <label>
+            Display Name
+            <input
+                name="display_name"
+                required
+                maxlength="100"
+                placeholder="Admin Name"
+                value="${escapeHtml(account.display_name || "")}">
+        </label>
+
+        <label>
+            Username
+            <input
+                name="username"
+                required
+                minlength="3"
+                maxlength="64"
+                autocomplete="off"
+                placeholder="username"
+                value="${escapeHtml(account.username || "")}">
+        </label>
+
+        <label>
+            Role
+            <select name="role">
+                <option
+                    value="ADMINISTRATOR"
+                    ${role === "ADMINISTRATOR" ? "selected" : ""}>
+                    Administrator
+                </option>
+
+                <option
+                    value="ADMIN_STAFF"
+                    ${role === "ADMIN_STAFF" ? "selected" : ""}>
+                    Admin Staff
+                </option>
+            </select>
+        </label>
+
+        <label>
+            Status
+            <select name="active">
+                <option
+                    value="true"
+                    ${active ? "selected" : ""}>
+                    ACTIVE
+                </option>
+
+                <option
+                    value="false"
+                    ${!active ? "selected" : ""}>
+                    INACTIVE
+                </option>
+            </select>
+        </label>
+
+        <label>
+            ${editing ? "New Password (optional)" : "Password"}
+            <input
+                name="password"
+                type="password"
+                minlength="8"
+                autocomplete="new-password"
+                ${editing ? "" : "required"}
+                placeholder="${editing ? "Leave blank to keep current password" : "Minimum 8 characters"}">
+        </label>
+
+        <label>
+            ${editing ? "Confirm New Password" : "Confirm Password"}
+            <input
+                name="confirm_password"
+                type="password"
+                minlength="8"
+                autocomplete="new-password"
+                ${editing ? "" : "required"}
+                placeholder="${editing ? "Repeat only when changing password" : "Repeat password"}">
+        </label>
+
+        <div class="full-row info-box">
+            <strong>Role permissions</strong>
+            <span>
+                Administrator: all Web Admin menus including Devices,
+                Admin Users and Settings.
+            </span>
+            <span>
+                Admin Staff: Dashboard, Inventory, Users and Transactions only.
+            </span>
+        </div>
+
+        <div class="form-actions">
+            <button
+                type="button"
+                class="btn ghost"
+                onclick="closeModal()">
+                Cancel
+            </button>
+
+            <button
+                class="btn primary"
+                type="submit">
+                ${editing ? "Save Admin User" : "Create Admin User"}
+            </button>
+        </div>
+    `;
+}
+
+function validateAdminUserPassword(
+    values,
+    editing
+) {
+    const password =
+        String(
+            values.password
+            ||
+            ""
+        );
+
+    const confirmation =
+        String(
+            values.confirm_password
+            ||
+            ""
+        );
+
+    if (
+        !editing
+        &&
+        password.length < 8
+    ) {
+        throw new Error(
+            "Password must be at least 8 characters."
+        );
+    }
+
+    if (
+        password
+        &&
+        password.length < 8
+    ) {
+        throw new Error(
+            "Password must be at least 8 characters."
+        );
+    }
+
+    if (
+        password !== confirmation
+    ) {
+        throw new Error(
+            "Password confirmation does not match."
+        );
+    }
+
+    return password;
+}
+
+function openNewAdminUser() {
+    if (!isAdministrator()) {
+        toast("Administrator access required.");
+        return;
+    }
+
+    openModal(
+        "Add Admin User",
+        adminUserForm(),
+        async form => {
+            const values =
+                Object.fromEntries(
+                    new FormData(
+                        form
+                    ).entries()
+                );
+
+            const password =
+                validateAdminUserPassword(
+                    values,
+                    false
+                );
+
+            await api(
+                "/api/v1/admin/admin-users",
+                {
+                    method: "POST",
+                    body: JSON.stringify({
+                        display_name:
+                            values.display_name.trim(),
+
+                        username:
+                            values.username.trim(),
+
+                        role:
+                            values.role,
+
+                        active:
+                            values.active === "true",
+
+                        password
+                    })
+                }
+            );
+
+            closeModal();
+            toast("Admin User created");
+            loadAdminUsers().catch(handleError);
+        }
+    );
+}
+
+function openEditAdminUser(
+    account
+) {
+    if (!isAdministrator()) {
+        toast("Administrator access required.");
+        return;
+    }
+
+    openModal(
+        "Edit Admin User",
+        adminUserForm(
+            account
+        ),
+        async form => {
+            const values =
+                Object.fromEntries(
+                    new FormData(
+                        form
+                    ).entries()
+                );
+
+            const password =
+                validateAdminUserPassword(
+                    values,
+                    true
+                );
+
+            const payload = {
+                display_name:
+                    values.display_name.trim(),
+
+                username:
+                    values.username.trim(),
+
+                role:
+                    values.role,
+
+                active:
+                    values.active === "true"
+            };
+
+            if (password) {
+                payload.password =
+                    password;
+            }
+
+            const result =
+                await api(
+                    `/api/v1/admin/admin-users/${encodeURIComponent(account.id)}`,
+                    {
+                        method: "PUT",
+                        body: JSON.stringify(
+                            payload
+                        )
+                    }
+                );
+
+            if (
+                Number(account.id) ===
+                Number(state.me?.id)
+            ) {
+                state.me = {
+                    ...state.me,
+                    ...result.data
+                };
+
+                $("adminIdentity").innerHTML =
+                    `<strong>${escapeHtml(state.me.display_name || state.me.username || "Admin")}</strong>` +
+                    `<br><span>${escapeHtml(adminRoleLabel(state.me.role))}</span>`;
+
+                applyRoleVisibility();
+            }
+
+            closeModal();
+            toast("Admin User updated");
+            loadAdminUsers().catch(handleError);
+        }
+    );
+}
+
+async function deleteAdminUser(
+    account
+) {
+    if (
+        Number(account.id) ===
+        Number(state.me?.id)
+    ) {
+        toast("You cannot delete the account currently signed in.");
+        return;
+    }
+
+    const confirmed =
+        confirm(
+            `Delete Web Admin account ${account.display_name || account.username}?\n\n` +
+            `The account will be disabled and all of its sessions will be revoked.`
+        );
+
+    if (!confirmed) {
+        return;
+    }
+
+    try {
+        await api(
+            `/api/v1/admin/admin-users/${encodeURIComponent(account.id)}`,
+            {
+                method: "DELETE"
+            }
+        );
+
+        toast("Admin User deleted");
+        loadAdminUsers().catch(handleError);
+
+    } catch (error) {
+        const friendly = {
+            CANNOT_DELETE_CURRENT_ACCOUNT:
+                "You cannot delete the account currently signed in.",
+
+            LAST_ADMINISTRATOR_REQUIRED:
+                "At least one active Administrator account must remain."
+        };
+
+        if (friendly[error.message]) {
+            toast(
+                friendly[
+                    error.message
+                ]
+            );
+            return;
+        }
+
+        handleError(error);
+    }
 }
 
 let trxSearchTimer;
@@ -696,6 +1338,7 @@ window.navigate = navigate;
 window.openNewItem = openNewItem;
 window.openNewUser = openNewUser;
 window.openNewDevice = openNewDevice;
+window.openNewAdminUser = openNewAdminUser;
 $("modalClose").addEventListener("click", closeModal);
 $("modal").addEventListener("click", event => { if (event.target === $("modal")) closeModal(); });
 

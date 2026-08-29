@@ -18,6 +18,7 @@ const {
     normalize,
     asInt,
     hashSecret,
+    hashPassword,
     verifyPassword,
     rowUser,
     rowItem,
@@ -107,6 +108,76 @@ function requireAdmin(req, res, next) {
     if (!session) return res.status(401).json({ success: false, error: "SESSION_EXPIRED" });
     req.admin = session;
     next();
+}
+
+
+function normalizeAdminAccountRole(value) {
+    const role = String(value ?? "")
+        .trim()
+        .toUpperCase()
+        .replace(/[\s-]+/g, "_");
+
+    if (role === "SUPERADMIN" || role === "ADMINISTRATOR") {
+        return "ADMINISTRATOR";
+    }
+
+    if (role === "ADMIN_STAFF" || role === "STAFF") {
+        return "ADMIN_STAFF";
+    }
+
+    throw new Error("INVALID_ADMIN_ROLE");
+}
+
+function isAdministratorRole(value) {
+    try {
+        return normalizeAdminAccountRole(value) === "ADMINISTRATOR";
+    } catch (_) {
+        return false;
+    }
+}
+
+function requireAdministrator(req, res, next) {
+    if (!req.admin || !isAdministratorRole(req.admin.role)) {
+        return res.status(403).json({
+            success: false,
+            error: "ADMINISTRATOR_REQUIRED"
+        });
+    }
+
+    next();
+}
+
+function adminAccountView(row) {
+    return {
+        id: Number(row.id),
+        username: row.username,
+        display_name: row.display_name ?? "",
+        role: normalizeAdminAccountRole(row.role),
+        active: Boolean(row.active),
+        created_at: row.created_at,
+        updated_at: row.updated_at
+    };
+}
+
+function validateAdminUsername(value) {
+    const username = String(value ?? "").trim();
+
+    if (!/^[A-Za-z0-9._-]{3,64}$/.test(username)) {
+        throw new Error("INVALID_ADMIN_USERNAME");
+    }
+
+    return username;
+}
+
+function countOtherActiveAdministrators(adminId) {
+    const rows = db.prepare(`
+        SELECT id, role
+        FROM admin_accounts
+        WHERE active=1
+          AND id<>?
+    `).all(Number(adminId));
+
+    return rows.filter(row => isAdministratorRole(row.role)).length;
 }
 
 function requireDevice(req, res, next) {
@@ -494,7 +565,7 @@ app.post("/api/v1/admin/login", (req, res) => {
     audit("ADMIN", admin.username, "LOGIN", "ADMIN", admin.username, {});
 
     res.setHeader("Set-Cookie", `ls_admin_session=${encodeURIComponent(token)}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${SESSION_HOURS * 3600}`);
-    res.json({ success: true, user: { username: admin.username, display_name: admin.display_name, role: admin.role } });
+    res.json({ success: true, user: { id: admin.id, username: admin.username, display_name: admin.display_name, role: admin.role } });
 });
 
 app.post("/api/v1/admin/logout", requireAdmin, (req, res) => {
@@ -636,13 +707,57 @@ app.put("/api/v1/admin/items/:uuid", requireAdmin, (req, res) => {
 
 app.delete("/api/v1/admin/items/:uuid", requireAdmin, (req, res) => {
     const old = db.prepare("SELECT * FROM items WHERE uuid=? AND deleted_at IS NULL").get(req.params.uuid);
-    if (!old) return res.status(404).json({ success: false, error: "ITEM_NOT_FOUND" });
+
+    if (!old) {
+        return res.status(404).json({
+            success: false,
+            error: "ITEM_NOT_FOUND"
+        });
+    }
+
+    /*
+     * A borrowed item must be returned first.
+     * Otherwise the cabinet would no longer be able to perform its return.
+     */
+    if (normalize(old.status) === "BORROWED") {
+        return res.status(409).json({
+            success: false,
+            error: "ITEM_CURRENTLY_BORROWED"
+        });
+    }
+
     const ts = nowIso();
-    db.prepare("UPDATE items SET deleted_at=?, updated_at=? WHERE uuid=?").run(ts, ts, old.uuid);
+
+    db.prepare(`
+        UPDATE items
+        SET deleted_at=?, updated_at=?
+        WHERE uuid=?
+    `).run(ts, ts, old.uuid);
+
     const row = db.prepare("SELECT * FROM items WHERE uuid=?").get(old.uuid);
-    recordChange("ITEMS", old.uuid, "DELETE", rowItem(row));
-    audit("ADMIN", req.admin.username, "ITEM_DELETE", "ITEMS", old.uuid, { item_code: old.item_code });
-    res.json({ success: true });
+
+    recordChange(
+        "ITEMS",
+        old.uuid,
+        "DELETE",
+        rowItem(row)
+    );
+
+    audit(
+        "ADMIN",
+        req.admin.username,
+        "ITEM_DELETE",
+        "ITEMS",
+        old.uuid,
+        {
+            item_code: old.item_code,
+            item_name: old.item_name
+        }
+    );
+
+    res.json({
+        success: true
+    });
 });
 
 app.get("/api/v1/admin/users", requireAdmin, (req, res) => {
@@ -737,7 +852,7 @@ app.get("/api/v1/admin/transactions", requireAdmin, (req, res) => {
     res.json({ success: true, page, limit, total, pages: Math.max(1, Math.ceil(total / limit)), data });
 });
 
-app.get("/api/v1/admin/devices", requireAdmin, (req, res) => {
+app.get("/api/v1/admin/devices", requireAdmin, requireAdministrator, (req, res) => {
     const data = db.prepare(`
         SELECT
             d.device_id,
@@ -777,7 +892,7 @@ app.get("/api/v1/admin/devices", requireAdmin, (req, res) => {
     res.json({ success: true, data });
 });
 
-app.post("/api/v1/admin/devices", requireAdmin, (req, res, next) => {
+app.post("/api/v1/admin/devices", requireAdmin, requireAdministrator, (req, res, next) => {
     try {
         const body = req.body || {};
 
@@ -825,7 +940,7 @@ app.post("/api/v1/admin/devices", requireAdmin, (req, res, next) => {
     }
 });
 
-app.put("/api/v1/admin/devices/:deviceId", requireAdmin, (req, res, next) => {
+app.put("/api/v1/admin/devices/:deviceId", requireAdmin, requireAdministrator, (req, res, next) => {
     try {
         const device = updateDevice(
             req.params.deviceId,
@@ -857,7 +972,7 @@ app.put("/api/v1/admin/devices/:deviceId", requireAdmin, (req, res, next) => {
     }
 });
 
-app.post("/api/v1/admin/devices/:deviceId/pairing", requireAdmin, (req, res, next) => {
+app.post("/api/v1/admin/devices/:deviceId/pairing", requireAdmin, requireAdministrator, (req, res, next) => {
     try {
         const pairing = createDevicePairing(
             req.params.deviceId,
@@ -878,7 +993,7 @@ app.post("/api/v1/admin/devices/:deviceId/pairing", requireAdmin, (req, res, nex
     }
 });
 
-app.delete("/api/v1/admin/devices/:deviceId", requireAdmin, (req, res, next) => {
+app.delete("/api/v1/admin/devices/:deviceId", requireAdmin, requireAdministrator, (req, res, next) => {
     try {
         softDeleteDevice(req.params.deviceId, req.admin.username);
         res.json({ success: true });
@@ -891,7 +1006,630 @@ app.delete("/api/v1/admin/devices/:deviceId", requireAdmin, (req, res, next) => 
 });
 
 
-app.get("/api/v1/admin/settings", requireAdmin, (req, res) => {
+
+/* =========================================================
+   ADMIN WEB ACCOUNTS
+========================================================= */
+
+app.get(
+    "/api/v1/admin/admin-users",
+    requireAdmin,
+    requireAdministrator,
+    (req, res) => {
+        const page = safePage(req.query.page);
+        const limit = safeLimit(req.query.limit, 50, 200);
+        const offset = (page - 1) * limit;
+        const search = String(req.query.search || "").trim();
+
+        const args = [];
+        let where = "";
+
+        if (search) {
+            const s = `%${search}%`;
+            where = `
+                WHERE username LIKE ? COLLATE NOCASE
+                   OR display_name LIKE ? COLLATE NOCASE
+            `;
+            args.push(s, s);
+        }
+
+        const total = Number(
+            db.prepare(`
+                SELECT COUNT(*) AS c
+                FROM admin_accounts
+                ${where}
+            `).get(...args).c || 0
+        );
+
+        const rows = db.prepare(`
+            SELECT
+                id,
+                username,
+                display_name,
+                role,
+                active,
+                created_at,
+                updated_at
+            FROM admin_accounts
+            ${where}
+            ORDER BY
+                active DESC,
+                display_name COLLATE NOCASE,
+                username COLLATE NOCASE
+            LIMIT ?
+            OFFSET ?
+        `).all(...args, limit, offset);
+
+        res.json({
+            success: true,
+            page,
+            limit,
+            total,
+            pages: Math.max(1, Math.ceil(total / limit)),
+            data: rows.map(adminAccountView)
+        });
+    }
+);
+
+app.post(
+    "/api/v1/admin/admin-users",
+    requireAdmin,
+    requireAdministrator,
+    (req, res, next) => {
+        try {
+            const body = req.body || {};
+
+            const username =
+                validateAdminUsername(
+                    body.username
+                );
+
+            const displayName =
+                String(
+                    body.display_name
+                    ??
+                    ""
+                ).trim()
+                ||
+                username;
+
+            const role =
+                normalizeAdminAccountRole(
+                    body.role
+                    ??
+                    "ADMIN_STAFF"
+                );
+
+            const password =
+                String(
+                    body.password
+                    ??
+                    ""
+                );
+
+            const active =
+                body.active === undefined
+                    ?
+                    1
+                    :
+                    (body.active ? 1 : 0);
+
+            if (password.length < 8) {
+                return res.status(400).json({
+                    success: false,
+                    error: "ADMIN_PASSWORD_MIN_8"
+                });
+            }
+
+            if (
+                db.prepare(`
+                    SELECT 1
+                    FROM admin_accounts
+                    WHERE username=?
+                    LIMIT 1
+                `).get(username)
+            ) {
+                return res.status(409).json({
+                    success: false,
+                    error: "ADMIN_USERNAME_ALREADY_EXISTS"
+                });
+            }
+
+            const { salt, hash } =
+                hashPassword(
+                    password
+                );
+
+            const ts =
+                nowIso();
+
+            const result = db.prepare(`
+                INSERT INTO admin_accounts(
+                    username,
+                    password_salt,
+                    password_hash,
+                    display_name,
+                    role,
+                    active,
+                    created_at,
+                    updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            `).run(
+                username,
+                salt,
+                hash,
+                displayName,
+                role,
+                active,
+                ts,
+                ts
+            );
+
+            const row = db.prepare(`
+                SELECT
+                    id,
+                    username,
+                    display_name,
+                    role,
+                    active,
+                    created_at,
+                    updated_at
+                FROM admin_accounts
+                WHERE id=?
+            `).get(
+                Number(result.lastInsertRowid)
+            );
+
+            audit(
+                "ADMIN",
+                req.admin.username,
+                "ADMIN_ACCOUNT_CREATE",
+                "ADMIN_ACCOUNTS",
+                String(row.id),
+                {
+                    username: row.username,
+                    role: normalizeAdminAccountRole(row.role),
+                    active: Boolean(row.active)
+                }
+            );
+
+            res.status(201).json({
+                success: true,
+                data: adminAccountView(row)
+            });
+
+        } catch (error) {
+            if (
+                String(error.message)
+                    .includes("UNIQUE constraint failed")
+            ) {
+                return res.status(409).json({
+                    success: false,
+                    error: "ADMIN_USERNAME_ALREADY_EXISTS"
+                });
+            }
+
+            if (
+                [
+                    "INVALID_ADMIN_USERNAME",
+                    "INVALID_ADMIN_ROLE"
+                ].includes(error.message)
+            ) {
+                return res.status(400).json({
+                    success: false,
+                    error: error.message
+                });
+            }
+
+            next(error);
+        }
+    }
+);
+
+app.put(
+    "/api/v1/admin/admin-users/:id",
+    requireAdmin,
+    requireAdministrator,
+    (req, res, next) => {
+        try {
+            const id =
+                Number(
+                    req.params.id
+                );
+
+            if (
+                !Number.isInteger(id)
+                ||
+                id <= 0
+            ) {
+                return res.status(400).json({
+                    success: false,
+                    error: "INVALID_ADMIN_ID"
+                });
+            }
+
+            const current = db.prepare(`
+                SELECT *
+                FROM admin_accounts
+                WHERE id=?
+                LIMIT 1
+            `).get(id);
+
+            if (!current) {
+                return res.status(404).json({
+                    success: false,
+                    error: "ADMIN_ACCOUNT_NOT_FOUND"
+                });
+            }
+
+            const body =
+                req.body
+                ||
+                {};
+
+            const username =
+                body.username === undefined
+                    ?
+                    current.username
+                    :
+                    validateAdminUsername(
+                        body.username
+                    );
+
+            const displayName =
+                body.display_name === undefined
+                    ?
+                    current.display_name
+                    :
+                    (
+                        String(
+                            body.display_name
+                            ??
+                            ""
+                        ).trim()
+                        ||
+                        username
+                    );
+
+            const role =
+                body.role === undefined
+                    ?
+                    normalizeAdminAccountRole(
+                        current.role
+                    )
+                    :
+                    normalizeAdminAccountRole(
+                        body.role
+                    );
+
+            const active =
+                body.active === undefined
+                    ?
+                    Number(current.active)
+                    :
+                    (body.active ? 1 : 0);
+
+            /*
+             * The signed-in administrator cannot remove their own
+             * administrator permission or disable their own account.
+             */
+            if (
+                Number(req.admin.id) === id
+                &&
+                (
+                    !active
+                    ||
+                    !isAdministratorRole(role)
+                )
+            ) {
+                return res.status(409).json({
+                    success: false,
+                    error: "CANNOT_RESTRICT_CURRENT_ACCOUNT"
+                });
+            }
+
+            /*
+             * Always keep at least one active Administrator.
+             */
+            if (
+                isAdministratorRole(current.role)
+                &&
+                (
+                    !active
+                    ||
+                    !isAdministratorRole(role)
+                )
+                &&
+                countOtherActiveAdministrators(id) < 1
+            ) {
+                return res.status(409).json({
+                    success: false,
+                    error: "LAST_ADMINISTRATOR_REQUIRED"
+                });
+            }
+
+            const duplicate = db.prepare(`
+                SELECT 1
+                FROM admin_accounts
+                WHERE username=?
+                  AND id<>?
+                LIMIT 1
+            `).get(
+                username,
+                id
+            );
+
+            if (duplicate) {
+                return res.status(409).json({
+                    success: false,
+                    error: "ADMIN_USERNAME_ALREADY_EXISTS"
+                });
+            }
+
+            const password =
+                body.password === undefined
+                    ?
+                    ""
+                    :
+                    String(
+                        body.password
+                        ??
+                        ""
+                    );
+
+            let salt =
+                current.password_salt;
+
+            let hash =
+                current.password_hash;
+
+            let passwordChanged =
+                false;
+
+            if (password) {
+                if (password.length < 8) {
+                    return res.status(400).json({
+                        success: false,
+                        error: "ADMIN_PASSWORD_MIN_8"
+                    });
+                }
+
+                const generated =
+                    hashPassword(
+                        password
+                    );
+
+                salt =
+                    generated.salt;
+
+                hash =
+                    generated.hash;
+
+                passwordChanged =
+                    true;
+            }
+
+            const ts =
+                nowIso();
+
+            db.prepare(`
+                UPDATE admin_accounts
+                SET
+                    username=?,
+                    display_name=?,
+                    role=?,
+                    active=?,
+                    password_salt=?,
+                    password_hash=?,
+                    updated_at=?
+                WHERE id=?
+            `).run(
+                username,
+                displayName,
+                role,
+                active,
+                salt,
+                hash,
+                ts,
+                id
+            );
+
+            /*
+             * Password/security changes invalidate other sessions.
+             * The currently signed-in session is preserved when
+             * editing the current account.
+             */
+            if (
+                passwordChanged
+                ||
+                !active
+            ) {
+                if (
+                    Number(req.admin.id) === id
+                ) {
+                    const currentToken =
+                        parseCookies(req)
+                            .ls_admin_session;
+
+                    const currentTokenHash =
+                        currentToken
+                            ?
+                            hashSecret(
+                                currentToken
+                            )
+                            :
+                            "";
+
+                    db.prepare(`
+                        DELETE FROM admin_sessions
+                        WHERE admin_id=?
+                          AND token_hash<>?
+                    `).run(
+                        id,
+                        currentTokenHash
+                    );
+
+                } else {
+                    db.prepare(`
+                        DELETE FROM admin_sessions
+                        WHERE admin_id=?
+                    `).run(id);
+                }
+            }
+
+            const row = db.prepare(`
+                SELECT
+                    id,
+                    username,
+                    display_name,
+                    role,
+                    active,
+                    created_at,
+                    updated_at
+                FROM admin_accounts
+                WHERE id=?
+            `).get(id);
+
+            audit(
+                "ADMIN",
+                req.admin.username,
+                "ADMIN_ACCOUNT_UPDATE",
+                "ADMIN_ACCOUNTS",
+                String(id),
+                {
+                    username: row.username,
+                    role: normalizeAdminAccountRole(row.role),
+                    active: Boolean(row.active),
+                    password_changed: passwordChanged
+                }
+            );
+
+            res.json({
+                success: true,
+                data: adminAccountView(row)
+            });
+
+        } catch (error) {
+            if (
+                String(error.message)
+                    .includes("UNIQUE constraint failed")
+            ) {
+                return res.status(409).json({
+                    success: false,
+                    error: "ADMIN_USERNAME_ALREADY_EXISTS"
+                });
+            }
+
+            if (
+                [
+                    "INVALID_ADMIN_USERNAME",
+                    "INVALID_ADMIN_ROLE"
+                ].includes(error.message)
+            ) {
+                return res.status(400).json({
+                    success: false,
+                    error: error.message
+                });
+            }
+
+            next(error);
+        }
+    }
+);
+
+app.delete(
+    "/api/v1/admin/admin-users/:id",
+    requireAdmin,
+    requireAdministrator,
+    (req, res) => {
+        const id =
+            Number(
+                req.params.id
+            );
+
+        if (
+            !Number.isInteger(id)
+            ||
+            id <= 0
+        ) {
+            return res.status(400).json({
+                success: false,
+                error: "INVALID_ADMIN_ID"
+            });
+        }
+
+        const current = db.prepare(`
+            SELECT *
+            FROM admin_accounts
+            WHERE id=?
+            LIMIT 1
+        `).get(id);
+
+        if (!current) {
+            return res.status(404).json({
+                success: false,
+                error: "ADMIN_ACCOUNT_NOT_FOUND"
+            });
+        }
+
+        if (
+            Number(req.admin.id) === id
+        ) {
+            return res.status(409).json({
+                success: false,
+                error: "CANNOT_DELETE_CURRENT_ACCOUNT"
+            });
+        }
+
+        if (
+            isAdministratorRole(current.role)
+            &&
+            current.active
+            &&
+            countOtherActiveAdministrators(id) < 1
+        ) {
+            return res.status(409).json({
+                success: false,
+                error: "LAST_ADMINISTRATOR_REQUIRED"
+            });
+        }
+
+        const ts =
+            nowIso();
+
+        db.prepare(`
+            UPDATE admin_accounts
+            SET active=0, updated_at=?
+            WHERE id=?
+        `).run(
+            ts,
+            id
+        );
+
+        db.prepare(`
+            DELETE FROM admin_sessions
+            WHERE admin_id=?
+        `).run(id);
+
+        audit(
+            "ADMIN",
+            req.admin.username,
+            "ADMIN_ACCOUNT_DELETE",
+            "ADMIN_ACCOUNTS",
+            String(id),
+            {
+                username: current.username
+            }
+        );
+
+        res.json({
+            success: true
+        });
+    }
+);
+
+app.get("/api/v1/admin/settings", requireAdmin, requireAdministrator, (req, res) => {
     const settings = {};
     const admin = {};
     for (const row of db.prepare("SELECT key, value FROM settings ORDER BY key").all()) settings[row.key] = row.value;
@@ -899,7 +1637,7 @@ app.get("/api/v1/admin/settings", requireAdmin, (req, res) => {
     res.json({ success: true, settings, admin });
 });
 
-app.put("/api/v1/admin/settings", requireAdmin, (req, res) => {
+app.put("/api/v1/admin/settings", requireAdmin, requireAdministrator, (req, res) => {
     const settings = req.body?.settings || {};
     const adminConfig = req.body?.admin || {};
     for (const [k, v] of Object.entries(settings)) setSetting(k, v, req.admin.username);
