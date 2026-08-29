@@ -11,6 +11,7 @@ const path = require("path");
 const { execFileSync, spawnSync } = require("child_process");
 const readline = require("readline/promises");
 const { stdin: input, stdout: output } = require("process");
+const license = require("../services/license_service");
 
 const ROOT = "/opt/LS_Inventory";
 const ENV_FILE = path.join(ROOT, ".env");
@@ -333,6 +334,25 @@ async function main() {
             console.log(
                 "node services/google_sync.js"
             );
+        }
+
+        const licenseStatus = license.publicStatus(
+            license.getCachedStatus()
+        );
+
+        console.log("");
+        console.log("License:");
+        console.log("Plan        :", String(licenseStatus.plan || "trial").toUpperCase());
+        console.log("Status      :", licenseStatus.status);
+        console.log("Fingerprint :", licenseStatus.fingerprint);
+
+        if (licenseStatus.plan === "trial") {
+            console.log("Trial Ends  :", licenseStatus.trial_expires_at);
+            console.log("Days Left   :", licenseStatus.days_remaining);
+            console.log("");
+            console.log("No Lifetime key is configured, so this Raspberry Pi starts in Trial automatically.");
+            console.log("To activate Lifetime later:");
+            console.log("node scripts/license_cli.js activate");
         }
 
         console.log("");
