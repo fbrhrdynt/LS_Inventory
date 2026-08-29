@@ -1,6 +1,20 @@
+<p align="center">
+  <img src="assets/LogiSource_Digital_Logo_HD.png"
+       alt="LogiSource Digital"
+       width="420">
+</p>
+
 # LS Inventory
 
-LS Inventory is a multi-cabinet inventory system built around Raspberry Pi cabinets with NFC (RC522), QR camera scanning, a local SQLite database for offline operation, and a central service hosted on the primary Raspberry Pi.
+Multi-cabinet Raspberry Pi inventory system with NFC,
+QR scanning, local SQLite/offline operation,
+Central Web Admin, device pairing, Tailscale connectivity,
+and per-device Trial/Lifetime licensing.
+
+## Documentation
+
+- [Panduan Instalasi - Bahasa Indonesia](docs/pdf/LS_Inventory_Installation_Guide_ID.pdf)
+- [Installation Guide - English](docs/pdf/LS_Inventory_Installation_Guide_EN.pdf)
 
 ## Current topology
 
